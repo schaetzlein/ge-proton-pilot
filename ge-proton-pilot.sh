@@ -57,9 +57,11 @@ box() {  # box "Title" "line 1" "line 2" ...
     echo "    ${YELLOW}└──────────────────────────────────────────${R}"
 }
 
-finish() {
-    echo
-    read -rp "  Press ${B}Enter${R} to close this window... " _
+finish() {  # finish [EXIT_CODE] -> in interactive mode, wait so a double-clicked window stays open
+    if [[ "${MODE:-interactive}" == interactive ]]; then
+        echo
+        read -rp "  Press ${B}Enter${R} to close this window... " _
+    fi
     exit "${1:-0}"
 }
 
@@ -189,15 +191,17 @@ PY
 
 # ---------- Steam process ----------
 
-choose_steam() {  # sets STEAM_KIND, STEAM_DIR, ... ; fails if no Steam was found
+choose_steam() {  # sets STEAM_KIND, STEAM_DIR, ... ; returns 1 if no Steam, 2 if a choice is needed
     local found=() k i choice path
     for k in "${STEAM_KINDS[@]}"; do
+        [[ -n "$STEAM_CHOICE" && "$k" != "$STEAM_CHOICE" ]] && continue
         [[ -d "${STEAM_PATHS[$k]}" ]] && found+=("$k")
     done
     case ${#found[@]} in
         0) return 1 ;;
         1) STEAM_KIND="${found[0]}" ;;
         *)
+            [[ "$MODE" != interactive ]] && return 2
             section "Which Steam?"
             line "More than one Steam is installed on this PC:"
             echo
@@ -349,6 +353,17 @@ install_version() {  # install_version TAG TARBALL_URL CHECKSUM_URL [TARBALL_BYT
     ok "Installed ${B}$tag${R}"
 }
 
+backup_config() {  # safety copy of Steam's settings (only the 3 newest are kept)
+    local backups=() b
+    if ! cp "$CONFIG_VDF" "$CONFIG_VDF.bak-$(date +%Y%m%d-%H%M%S)"; then
+        fail "Couldn't make a safety copy of Steam's settings, so nothing was changed."
+        line "Is your disk full?"
+        return 1
+    fi
+    mapfile -t backups < <(printf '%s\n' "$CONFIG_VDF".bak-* | sort -r)
+    for b in "${backups[@]:3}"; do rm -f -- "$b"; done
+}
+
 set_default() {  # set_default NAME
     local name="$1" mode="set" pinned choice
     section "Use $name for your games"
@@ -387,11 +402,7 @@ set_default() {  # set_default NAME
 
     close_steam || { line "Nothing was changed."; return 1; }
 
-    # Safety copy of Steam's settings (only the 3 newest are kept)
-    cp "$CONFIG_VDF" "$CONFIG_VDF.bak-$(date +%Y%m%d-%H%M%S)"
-    local backups=() b
-    mapfile -t backups < <(printf '%s\n' "$CONFIG_VDF".bak-* | sort -r)
-    for b in "${backups[@]:3}"; do rm -f -- "$b"; done
+    backup_config || { offer_start_steam; return 1; }
 
     if vdf_tool "$mode" "$name"; then
         ok "Done! Steam now uses ${B}$name${R} for your games."
@@ -430,8 +441,10 @@ remove_old() {  # remove_old KEEP_NAME (empty KEEP_NAME: only offer wrong-type b
     (( any_wrong )) && line "${D}Versions of the wrong type can't run on this PC at all.${R}"
     if (( all_wrong )); then
         default=y  # nothing in the list can ever be used here
-    else
+    elif (( any_wrong )); then
         line "${D}You only need the others if you set a game to one of them yourself.${R}"
+    else
+        line "${D}You only need them if you set a game to one of these versions yourself.${R}"
     fi
     echo
     if ask_yes_no "Delete the older versions to free up space?" "$default"; then
@@ -446,68 +459,79 @@ remove_old() {  # remove_old KEEP_NAME (empty KEEP_NAME: only offer wrong-type b
 
 # ---------- Main ----------
 
-header
+usage() {
+    cat <<EOF
+GE-Proton Pilot - keeps GE-Proton up to date for Steam on Linux.
 
-if ! choose_steam; then
-    section "Problem"
-    fail "Steam was not found on this PC."
-    line "This tool works with Steam installed from the Steam website,"
-    line "your Linux package manager, Flatpak or Snap."
-    line "Please start Steam once, then run this tool again."
-    finish 1
-fi
-for cmd in curl python3 sha512sum tar; do
-    if ! command -v "$cmd" >/dev/null; then
-        section "Problem"
-        fail "A required program is missing: ${B}$cmd${R}"
-        line "Install it by typing this into a terminal:"
-        line "  ${B}sudo apt install $cmd${R}"
-        finish 1
-    fi
-done
+Usage: ${0##*/} [OPTION]
 
-section "Your current setup"
-row "Steam:" "${STEAM_LABELS[$STEAM_KIND]}"
-mapfile -t installed < <(installed_versions)
-usable=()
-for v in "${installed[@]}"; do wrong_arch "$v" || usable+=("$v"); done
-current_default=$(vdf_tool get 2>/dev/null || true)
-default_wrong=0
-[[ "$current_default" == GE-Proton* ]] && wrong_arch "$current_default" && default_wrong=1
-if [[ ${#installed[@]} -gt 0 ]]; then
-    label="Installed versions:"
-    for v in "${installed[@]}"; do
-        if wrong_arch "$v"; then
-            row "$label" "$v ${YELLOW}(wrong type for this PC)${R}"
-        else
-            row "$label" "$v"
-        fi
-        label=""
-    done
-else
-    row "Installed versions:" "${D}none yet${R}"
-fi
-if (( default_wrong )); then
-    row "Steam is using:" "$current_default ${YELLOW}(wrong type for this PC)${R}"
-elif [[ -n "$current_default" && "$current_default" == GE-Proton* ]]; then
-    row "Steam is using:" "$current_default"
-else
-    row "Steam is using:" "${D}Steam's own Proton (not GE-Proton)${R}"
-fi
-if (( default_wrong )); then
-    box "Steam is set to the wrong type of GE-Proton" \
-        "${B}$current_default${R} is made for a different kind of PC," \
-        "so games that use it won't start." \
-        "This tool will offer to fix that below."
-fi
+Without options, the tool asks before every step.
 
-section "Checking for updates"
-line "Looking for the newest version online..."
-release_json=$(curl -fsSL "$API_URL") || {
-    fail "Couldn't reach GitHub. Please check your internet connection and try again."
-    finish 1
+Options:
+  --check          Only check for an update. Exit code 0 = nothing to do,
+                   10 = an update is available (or installed but not used yet).
+  --auto           Install the newest version and make it Steam's default
+                   without asking. Steam must be closed. Games set to a
+                   specific version and old versions are left alone.
+  --steam KIND     Which Steam to use if more than one is installed:
+                   native, flatpak or snap.
+  -h, --help       Show this help.
+
+Exit codes: 0 ok, 1 error, 2 wrong usage, 3 Steam is running (--auto),
+10 update available (--check).
+EOF
 }
-read -r latest tar_url sum_url size_mb size_bytes < <(python3 -c '
+
+check_requirements() {
+    local cmd status
+    for cmd in curl python3 sha512sum tar; do
+        if ! command -v "$cmd" >/dev/null; then
+            section "Problem"
+            fail "A required program is missing: ${B}$cmd${R}"
+            line "Install it by typing this into a terminal:"
+            line "  ${B}sudo apt install $cmd${R}"
+            finish 1
+        fi
+    done
+    choose_steam; status=$?
+    case $status in
+        0) ;;
+        2)
+            fail "More than one Steam is installed. Choose one with ${B}--steam native${R}, ${B}--steam flatpak${R} or ${B}--steam snap${R}."
+            finish 2 ;;
+        *)
+            section "Problem"
+            if [[ -n "$STEAM_CHOICE" ]]; then
+                fail "No ${STEAM_LABELS[$STEAM_CHOICE]} was found on this PC."
+            else
+                fail "Steam was not found on this PC."
+                line "This tool works with Steam installed from the Steam website,"
+                line "your Linux package manager, Flatpak or Snap."
+                line "Please start Steam once, then run this tool again."
+            fi
+            finish 1 ;;
+    esac
+}
+
+scan_installed() {  # sets installed, usable, current_default, default_wrong, has_mapping
+    local v
+    mapfile -t installed < <(installed_versions)
+    usable=()
+    for v in "${installed[@]}"; do wrong_arch "$v" || usable+=("$v"); done
+    has_mapping=1
+    current_default=$(vdf_tool get 2>/dev/null) || { [[ $? -eq 3 ]] && has_mapping=0; }
+    default_wrong=0
+    [[ "$current_default" == GE-Proton* ]] && wrong_arch "$current_default" && default_wrong=1
+    return 0
+}
+
+fetch_release() {  # sets latest, tar_url, sum_url, size_mb, size_bytes
+    local release_json
+    release_json=$(curl -fsSL "$API_URL") || {
+        fail "Couldn't reach GitHub. Please check your internet connection and try again."
+        finish 1
+    }
+    read -r latest tar_url sum_url size_mb size_bytes < <(python3 -c '
 import json, re, sys
 arch = sys.argv[1]
 d = json.load(sys.stdin)
@@ -531,58 +555,162 @@ name = tar.rsplit("/", 1)[-1][:-len(".tar.gz")] if tar and d.get("tag_name") els
 print(name, tar, sha, size, size_bytes)
 ' "$(uname -m)" <<<"$release_json")
 
-if [[ -z "${latest:-}" || -z "${tar_url:-}" || -z "${sum_url:-}" ]]; then
-    fail "The update information from GitHub couldn't be read."
-    line "Please try again later."
-    finish 1
-fi
-row "Newest version:" "${B}$latest${R}"
-echo
-
-offered_default=0
-if contains "$latest" "${usable[@]}"; then
-    if [[ "$current_default" == "$latest" ]]; then
-        ok "${GREEN}Everything is up to date.${R} Nothing to do."
-    else
-        ok "The newest version is already installed."
-        warn "But Steam isn't using it yet."
-        offered_default=1
-        set_default "$latest"
+    if [[ -z "${latest:-}" || -z "${tar_url:-}" || -z "${sum_url:-}" ]]; then
+        fail "The update information from GitHub couldn't be read."
+        line "Please try again later."
+        finish 1
     fi
-else
-    ok "${GREEN}A new version is available!${R}"
+}
+
+run_check() {
+    scan_installed
+    fetch_release
+    if ! contains "$latest" "${usable[@]}"; then
+        echo "Update available: $latest"
+        exit 10
+    elif [[ "$current_default" != "$latest" ]] && (( has_mapping )); then
+        echo "$latest is installed, but Steam isn't using it yet."
+        exit 10
+    fi
+    echo "Up to date: $latest"
+    exit 0
+}
+
+run_auto() {
+    if steam_running; then
+        fail "Steam is running. Please close Steam and run this again. Nothing was changed."
+        exit 3
+    fi
+    scan_installed
+    fetch_release
+    if ! contains "$latest" "${usable[@]}"; then
+        install_version "$latest" "$tar_url" "$sum_url" "${size_bytes:-0}" || exit 1
+    fi
+    if [[ "$current_default" == "$latest" ]]; then
+        ok "Up to date: Steam already uses ${B}$latest${R}."
+        exit 0
+    fi
+    if (( ! has_mapping )); then
+        fail "$latest is installed, but Steam has to be set up once by hand first."
+        manual_setup_box "$latest"
+        exit 1
+    fi
+    backup_config || exit 1
+    if vdf_tool set "$latest"; then
+        ok "Steam now uses ${B}$latest${R} for your games."
+    else
+        fail "The setting could not be saved. Your Steam settings were not changed."
+        exit 1
+    fi
+}
+
+run_interactive() {
+    local v label offered_default=0
+
+    header
+    check_requirements
+
+    section "Your current setup"
+    row "Steam:" "${STEAM_LABELS[$STEAM_KIND]}"
+    scan_installed
+    if [[ ${#installed[@]} -gt 0 ]]; then
+        label="Installed versions:"
+        for v in "${installed[@]}"; do
+            if wrong_arch "$v"; then
+                row "$label" "$v ${YELLOW}(wrong type for this PC)${R}"
+            else
+                row "$label" "$v"
+            fi
+            label=""
+        done
+    else
+        row "Installed versions:" "${D}none yet${R}"
+    fi
+    if (( default_wrong )); then
+        row "Steam is using:" "$current_default ${YELLOW}(wrong type for this PC)${R}"
+    elif [[ -n "$current_default" && "$current_default" == GE-Proton* ]]; then
+        row "Steam is using:" "$current_default"
+    else
+        row "Steam is using:" "${D}Steam's own Proton (not GE-Proton)${R}"
+    fi
+    if (( default_wrong )); then
+        box "Steam is set to the wrong type of GE-Proton" \
+            "${B}$current_default${R} is made for a different kind of PC," \
+            "so games that use it won't start." \
+            "This tool will offer to fix that below."
+    fi
+
+    section "Checking for updates"
+    line "Looking for the newest version online..."
+    fetch_release
+    row "Newest version:" "${B}$latest${R}"
     echo
-    if ask_yes_no "Download and install $latest now? (about ${size_mb:-?} MB)" y; then
-        if install_version "$latest" "$tar_url" "$sum_url" "${size_bytes:-0}"; then
+
+    if contains "$latest" "${usable[@]}"; then
+        if [[ "$current_default" == "$latest" ]]; then
+            ok "${GREEN}Everything is up to date.${R} Nothing to do."
+        else
+            ok "The newest version is already installed."
+            warn "But Steam isn't using it yet."
             offered_default=1
             set_default "$latest"
-        else
-            finish 1
         fi
     else
-        line "Okay, nothing was installed."
+        ok "${GREEN}A new version is available!${R}"
+        echo
+        if ask_yes_no "Download and install $latest now? (about ${size_mb:-?} MB)" y; then
+            if install_version "$latest" "$tar_url" "$sum_url" "${size_bytes:-0}"; then
+                offered_default=1
+                set_default "$latest"
+            else
+                finish 1
+            fi
+        else
+            line "Okay, nothing was installed."
+        fi
     fi
-fi
 
-# Steam still points to a build that can't run here and we haven't offered a fix yet
-if (( default_wrong && ! offered_default )); then
+    # Steam still points to a build that can't run here and we haven't offered a fix yet
+    if (( default_wrong && ! offered_default )); then
+        scan_installed
+        if [[ ${#usable[@]} -gt 0 ]]; then
+            set_default "${usable[-1]}"
+        else
+            warn "Steam is still set to ${B}$current_default${R}, which can't run on this PC."
+            line "Install the newest version to fix this."
+        fi
+    fi
+
     mapfile -t installed < <(installed_versions)
-    usable=()
-    for v in "${installed[@]}"; do wrong_arch "$v" || usable+=("$v"); done
-    if [[ ${#usable[@]} -gt 0 ]]; then
-        set_default "${usable[-1]}"
+    if contains "$latest" "${installed[@]}"; then
+        remove_old "$latest"
     else
-        warn "Steam is still set to ${B}$current_default${R}, which can't run on this PC."
-        line "Install the newest version to fix this."
+        remove_old ""
     fi
+
+    section "All done"
+    finish 0
+}
+
+MODE=interactive STEAM_CHOICE=""
+while [[ $# -gt 0 ]]; do
+    case "$1" in
+        --check)   MODE=check ;;
+        --auto)    MODE=auto ;;
+        --steam)   STEAM_CHOICE="${2:-}"; shift ;;
+        --steam=*) STEAM_CHOICE="${1#*=}" ;;
+        -h|--help) usage; exit 0 ;;
+        *) echo "Unknown option: $1" >&2; echo >&2; usage >&2; exit 2 ;;
+    esac
+    shift
+done
+if [[ -n "$STEAM_CHOICE" && -z "${STEAM_PATHS[$STEAM_CHOICE]+set}" ]]; then
+    echo "--steam must be native, flatpak or snap (not \"$STEAM_CHOICE\")." >&2
+    exit 2
 fi
 
-mapfile -t installed < <(installed_versions)
-if contains "$latest" "${installed[@]}"; then
-    remove_old "$latest"
-else
-    remove_old ""
-fi
-
-section "All done"
-finish 0
+case "$MODE" in
+    check) check_requirements; run_check ;;
+    auto)  check_requirements; run_auto ;;
+    *)     run_interactive ;;
+esac
