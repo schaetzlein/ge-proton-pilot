@@ -4,6 +4,9 @@
 # - Installs it (with checksum verification)
 # - Sets it as Steam's default compatibility tool
 # - Optionally removes old GE-Proton versions
+#
+# GE-Proton itself is made by GloriousEggroll and contributors:
+# https://github.com/GloriousEggroll/proton-ge-custom
 
 set -uo pipefail
 
@@ -29,6 +32,8 @@ header() {
     echo "  ${B}${CYAN}╰──────────────────────────────────────────────╯${R}"
     echo "  ${D}Keeps GE-Proton up to date. GE-Proton is a community${R}"
     echo "  ${D}version of Proton that helps Windows games run on Linux.${R}"
+    echo "  ${D}GE-Proton is made by GloriousEggroll – thank you!${R}"
+    echo "  ${D}https://github.com/GloriousEggroll/proton-ge-custom${R}"
 }
 section() { echo; echo "  ${B}${BLUE}▌ $1${R}"; echo; }
 line()    { echo "    $1"; }

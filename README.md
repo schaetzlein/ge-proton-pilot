@@ -7,6 +7,14 @@ Windows games on Linux. It often fixes games that don't work with Steam's own
 Proton. This script saves you from downloading, unpacking and setting it up
 by hand.
 
+> **Credit:** GE-Proton is created and maintained by
+> [GloriousEggroll](https://github.com/GloriousEggroll) and its contributors:
+> **[github.com/GloriousEggroll/proton-ge-custom](https://github.com/GloriousEggroll/proton-ge-custom)**.
+> GE-Proton Pilot only downloads and sets up their releases. It is not
+> affiliated with the GE-Proton project. All the credit for making games
+> run better goes to them. If GE-Proton helps you, consider supporting
+> their work.
+
 ## What it does
 
 Each time you run it, the script:
