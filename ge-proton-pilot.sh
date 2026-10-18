@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# GE-Proton Pilot for native Steam (installed from the Steam website / .deb)
+# GE-Proton Pilot for Steam on Linux (native .deb, Flatpak or Snap)
 # - Checks GitHub for the newest GE-Proton release
 # - Installs it (with checksum verification)
 # - Sets it as Steam's default compatibility tool
@@ -10,9 +10,15 @@
 
 set -uo pipefail
 
-STEAM_DIR="$HOME/.steam/steam"
-COMPAT_DIR="$STEAM_DIR/compatibilitytools.d"
-CONFIG_VDF="$STEAM_DIR/config/config.vdf"
+# Where each kind of Steam keeps its files (set by choose_steam)
+STEAM_KINDS=(native flatpak snap)
+declare -A STEAM_PATHS=(
+    [native]="$HOME/.steam/steam"
+    [flatpak]="$HOME/.var/app/com.valvesoftware.Steam/data/Steam"
+    [snap]="$HOME/snap/steam/common/.steam/steam"
+)
+declare -A STEAM_LABELS=([native]="Steam (standard install)" [flatpak]="Steam (Flatpak)" [snap]="Steam (Snap)")
+STEAM_KIND="" STEAM_DIR="" COMPAT_DIR="" CONFIG_VDF="" STEAM_CMD=()
 API_URL="https://api.github.com/repos/GloriousEggroll/proton-ge-custom/releases/latest"
 case "$(uname -m)" in aarch64|arm64) HOST_ARCH=arm ;; *) HOST_ARCH=x86 ;; esac
 
@@ -183,6 +189,37 @@ PY
 
 # ---------- Steam process ----------
 
+choose_steam() {  # sets STEAM_KIND, STEAM_DIR, ... ; fails if no Steam was found
+    local found=() k i choice path
+    for k in "${STEAM_KINDS[@]}"; do
+        [[ -d "${STEAM_PATHS[$k]}" ]] && found+=("$k")
+    done
+    case ${#found[@]} in
+        0) return 1 ;;
+        1) STEAM_KIND="${found[0]}" ;;
+        *)
+            section "Which Steam?"
+            line "More than one Steam is installed on this PC:"
+            echo
+            for i in "${!found[@]}"; do
+                path="${STEAM_PATHS[${found[$i]}]}"
+                line "${B}$(( i + 1 )))${R} ${STEAM_LABELS[${found[$i]}]}  ${D}~${path#"$HOME"}${R}"
+            done
+            echo
+            choice=$(ask_choice ${#found[@]})
+            STEAM_KIND="${found[$(( choice - 1 ))]}"
+            ;;
+    esac
+    STEAM_DIR="${STEAM_PATHS[$STEAM_KIND]}"
+    COMPAT_DIR="$STEAM_DIR/compatibilitytools.d"
+    CONFIG_VDF="$STEAM_DIR/config/config.vdf"
+    case "$STEAM_KIND" in
+        flatpak) STEAM_CMD=(flatpak run com.valvesoftware.Steam) ;;
+        snap)    STEAM_CMD=(snap run steam) ;;
+        *)       STEAM_CMD=(steam) ;;
+    esac
+}
+
 steam_running() { pgrep -x steam >/dev/null 2>&1; }
 
 close_steam() {
@@ -192,7 +229,7 @@ close_steam() {
     line "${D}Running downloads pause and continue when Steam starts again.${R}"
     echo
     ask_yes_no "Close Steam now?" y || return 1
-    steam -shutdown >/dev/null 2>&1 &
+    "${STEAM_CMD[@]}" -shutdown >/dev/null 2>&1 &
     printf "    Closing Steam"
     for _ in $(seq 1 60); do
         if ! steam_running; then
@@ -213,7 +250,7 @@ offer_start_steam() {
     steam_running && return 0
     echo
     if ask_yes_no "Start Steam again?" y; then
-        setsid -f steam >/dev/null 2>&1
+        setsid -f "${STEAM_CMD[@]}" >/dev/null 2>&1
         ok "Steam is starting."
     fi
 }
@@ -411,11 +448,12 @@ remove_old() {  # remove_old KEEP_NAME (empty KEEP_NAME: only offer wrong-type b
 
 header
 
-if [[ ! -d "$STEAM_DIR" ]]; then
+if ! choose_steam; then
     section "Problem"
     fail "Steam was not found on this PC."
-    line "This tool works with Steam installed from the Steam website"
-    line "or from Linux Mint's package (not the Flatpak version)."
+    line "This tool works with Steam installed from the Steam website,"
+    line "your Linux package manager, Flatpak or Snap."
+    line "Please start Steam once, then run this tool again."
     finish 1
 fi
 for cmd in curl python3 sha512sum tar; do
@@ -429,6 +467,7 @@ for cmd in curl python3 sha512sum tar; do
 done
 
 section "Your current setup"
+row "Steam:" "${STEAM_LABELS[$STEAM_KIND]}"
 mapfile -t installed < <(installed_versions)
 usable=()
 for v in "${installed[@]}"; do wrong_arch "$v" || usable+=("$v"); done
