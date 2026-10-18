@@ -131,14 +131,55 @@ test_other_series_only_is_mentioned() {
 test_cleanup_keeps_newest_of_each_series() {
     publish_history
     add_installed GE-Proton9-27 GE-Proton10-33 GE-Proton10-34 "$OLD" "$NEW"
-    write_config "$NEW"
+    write_config "$NEW" 10=GE-Proton9-27 20=GE-Proton10-34
     run_script 'y\n\n'
     assert_output "Deleted GE-Proton10-33" &&
     assert_output "Deleted $OLD" &&
+    assert_no_output "no game uses it" &&
     assert_installed GE-Proton9-27 &&
     assert_installed GE-Proton10-34 &&
     assert_installed "$NEW" &&
     assert_not_installed GE-Proton10-33
+}
+
+test_unused_older_series_deleted() {
+    publish_history
+    add_installed GE-Proton10-33 GE-Proton10-34 "$OLD" "$NEW"
+    write_config "$NEW"
+    # delete GE-Proton11-8: y | delete GE-Proton10: y | close
+    run_script 'y\ny\n\n'
+    assert_output "You also have GE-Proton10" &&
+    assert_output "fallback for games that don't run well on GE-Proton11" &&
+    assert_no_output "Update GE-Proton10" &&
+    assert_output "Deleted $OLD" &&
+    assert_not_installed GE-Proton10-33 &&
+    assert_not_installed GE-Proton10-34 &&
+    assert_installed "$NEW"
+}
+
+test_unused_older_series_kept_is_not_asked_again() {
+    publish_history
+    add_installed GE-Proton9-27 GE-Proton10-34 "$NEW"
+    write_config "$NEW"
+    # keep GE-Proton9 (Enter) | delete GE-Proton10: y | close
+    run_script '\ny\n\n'
+    assert_output "You won't be asked about GE-Proton9 again." &&
+    assert_installed GE-Proton9-27 &&
+    assert_not_installed GE-Proton10-34 &&
+    run_script '\n'
+    assert_no_output "Clean up" &&
+    assert_installed GE-Proton9-27
+}
+
+test_installed_series_is_never_offered_for_deletion() {
+    publish_history
+    add_installed "$NEW"
+    write_config "$NEW"
+    run_script '' --install 10
+    assert_installed GE-Proton10-34 &&
+    run_script '\n'
+    assert_no_output "Clean up" &&
+    assert_installed GE-Proton10-34
 }
 
 test_cleanup_keeps_versions_games_use() {
@@ -170,7 +211,7 @@ test_older_series_is_updated_and_games_moved() {
 test_older_series_update_declined() {
     publish_history
     add_installed GE-Proton10-33 "$NEW"
-    write_config "$NEW"
+    write_config "$NEW" 10=GE-Proton10-33
     run_script 'n\n\n'
     assert_output "Okay, nothing was installed." &&
     assert_not_downloaded GE-Proton10-34.tar.gz &&
@@ -181,7 +222,7 @@ test_older_series_update_declined() {
 test_older_series_already_newest() {
     publish_history
     add_installed GE-Proton9-27 GE-Proton10-34 "$NEW"
-    write_config "$NEW"
+    write_config "$NEW" 10=GE-Proton9-27 20=GE-Proton10-34
     run_script '\n'
     assert_status 0 &&
     assert_no_output "Update GE-Proton" &&
