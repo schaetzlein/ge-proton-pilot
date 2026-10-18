@@ -1,0 +1,13 @@
+# Editor / OS clutter
+*~
+*.swp
+.*.swp
+.vscode/
+.idea/
+.DS_Store
+
+# Downloads and scratch files from manual testing
+*.tar.gz
+*.sha512sum
+*.tmp
+config.vdf*
