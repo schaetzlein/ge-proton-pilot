@@ -1,0 +1,4 @@
+#!/usr/bin/env bash
+# Fake steam: -shutdown stops it, anything else starts it
+echo "steam $*" >> "$FAKE_SERVER/requests.log"
+if [[ "${1:-}" == -shutdown ]]; then rm -f "$FAKE_STEAM_RUNNING"; else touch "$FAKE_STEAM_RUNNING"; fi

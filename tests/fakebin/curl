@@ -1,0 +1,48 @@
+#!/usr/bin/env bash
+# Fake curl: serves files from $FAKE_SERVER by URL basename.
+# The GitHub API URL maps to $FAKE_SERVER/release.json and answers with
+# HTTP $FAKE_API_STATUS (default 200) plus the header lines in $FAKE_API_HEADERS.
+# FAKE_OFFLINE=1 simulates no network. Downloads with -o are written in
+# chunks (FAKE_CURL_DELAY seconds apart) so the progress bar can be seen.
+out="" url="" dump="" fmt=""
+while [[ $# -gt 0 ]]; do
+    case "$1" in
+        -o) out="$2"; shift ;;
+        -D) dump="$2"; shift ;;
+        -w) fmt="$2"; shift ;;
+        http*) url="$1" ;;
+    esac
+    shift
+done
+echo "$url" >> "$FAKE_SERVER/requests.log"
+[[ -n "${FAKE_OFFLINE:-}" ]] && exit 6
+status=200
+case "$url" in
+    https://api.github.com/*)
+        src="$FAKE_SERVER/release.json"
+        status="${FAKE_API_STATUS:-200}"
+        if [[ "$status" != 200 ]]; then
+            src="$FAKE_SERVER/error.json"
+            echo '{"message": "API rate limit exceeded"}' > "$src"
+        fi
+        ;;
+    *) src="$FAKE_SERVER/${url##*/}" ;;
+esac
+[[ -f "$src" ]] || { status=404; src=/dev/null; }
+if [[ -n "$dump" ]]; then
+    printf 'HTTP/2 %s\r\ncontent-type: application/json\r\n' "$status" > "$dump"
+    [[ -n "${FAKE_API_HEADERS:-}" ]] && printf '%s\r\n' "$FAKE_API_HEADERS" >> "$dump"
+    printf '\r\n' >> "$dump"
+fi
+if [[ -z "$out" ]]; then
+    cat "$src"
+else
+    : > "$out"
+    size=$(stat -c %s "$src") chunk=$(( size / 10 + 1 ))
+    for i in $(seq 0 9); do
+        dd if="$src" bs="$chunk" skip="$i" count=1 status=none >> "$out"
+        sleep "${FAKE_CURL_DELAY:-0}"
+    done
+fi
+[[ "$fmt" == '%{http_code}' ]] && printf '%s' "$status"
+[[ "$status" == 200 ]] || [[ -n "$fmt" ]] || exit 22

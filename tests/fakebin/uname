@@ -1,0 +1,3 @@
+#!/usr/bin/env bash
+# Fake uname: reports $FAKE_ARCH for -m
+if [[ "${1:-}" == -m ]]; then echo "${FAKE_ARCH:-x86_64}"; else exec /usr/bin/uname "$@"; fi

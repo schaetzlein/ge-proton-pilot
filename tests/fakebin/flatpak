@@ -1,0 +1,5 @@
+#!/usr/bin/env bash
+# Fake flatpak/snap: "run <app> ARGS" logs the call and acts like the fake steam
+echo "$(basename "$0") $*" >> "$FAKE_SERVER/requests.log"
+shift 2
+exec "$(dirname "$0")/steam" "$@"
