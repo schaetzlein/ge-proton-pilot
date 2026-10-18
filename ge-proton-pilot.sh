@@ -227,6 +227,12 @@ manual_setup_box() {  # manual_setup_box NAME
 
 # ---------- Actions ----------
 
+contains() {  # contains NEEDLE ITEM... -> success if NEEDLE is one of the items
+    local needle="$1" item; shift
+    for item in "$@"; do [[ "$item" == "$needle" ]] && return 0; done
+    return 1
+}
+
 installed_versions() {
     [[ -d "$COMPAT_DIR" ]] || return 0
     find "$COMPAT_DIR" -mindepth 1 -maxdepth 1 -type d -name 'GE-Proton*' -printf '%f\n' | sort -V
@@ -406,7 +412,7 @@ fi
 row "Newest version:" "${B}$latest${R}"
 echo
 
-if printf '%s\n' "${installed[@]}" | grep -qx "$latest"; then
+if contains "$latest" "${installed[@]}"; then
     if [[ "$current_default" == "$latest" ]]; then
         ok "${GREEN}Everything is up to date.${R} Nothing to do."
     else
@@ -428,7 +434,8 @@ else
     fi
 fi
 
-if installed_versions | grep -qx "$latest"; then
+mapfile -t installed < <(installed_versions)
+if contains "$latest" "${installed[@]}"; then
     remove_old "$latest"
 fi
 
