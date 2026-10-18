@@ -39,26 +39,45 @@ write_config_without_mapping() {  # Steam never stored a compatibility choice
         > "$STEAM/config/config.vdf"
 }
 
-publish_release() {  # publish_release TAG [FILLER_MB] -> x86_64 + aarch64 assets on the fake server
-    local tag="$1" mb="${2:-1}" arch name build
-    build="$WORK/build"
-    for arch in x86_64 aarch64; do
-        name="$tag-$arch"
+build_assets() {  # build_assets NAME... -> archive + checksum per build on the fake server
+    local name build="$WORK/build"
+    for name in "$@"; do
         mkdir -p "$build/$name"
         echo "\"compatibilitytools\" { \"compat_tools\" { \"$name\" { \"display_name\" \"$name\" } } }" \
             > "$build/$name/compatibilitytool.vdf"
-        head -c $(( mb * 1000000 )) /dev/urandom > "$build/$name/filler"
+        head -c $(( ${FILLER_MB:-1} * 1000000 )) /dev/urandom > "$build/$name/filler"
         tar -czf "$FAKE_SERVER/$name.tar.gz" -C "$build" "$name"
         (cd "$FAKE_SERVER" && sha512sum "$name.tar.gz" > "$name.sha512sum")
     done
-    python3 -I - "$tag" "$FAKE_SERVER" > "$FAKE_SERVER/release.json" <<'PY'
+}
+
+release_json() {  # release_json TAG NAME... -> a release on the fake server (tags/TAG.json + releases.json)
+    local tag="$1"; shift
+    mkdir -p "$FAKE_SERVER/tags"
+    python3 -I - "$tag" "$FAKE_SERVER" "$@" <<'PY2'
 import json, os, sys
-tag, srv = sys.argv[1], sys.argv[2]
+tag, srv, names = sys.argv[1], sys.argv[2], sys.argv[3:]
 base = "https://github.com/GloriousEggroll/proton-ge-custom/releases/download/" + tag + "/"
 assets = [{"name": f, "browser_download_url": base + f, "size": os.path.getsize(os.path.join(srv, f))}
-          for a in ("aarch64", "x86_64") for f in (f"{tag}-{a}.sha512sum", f"{tag}-{a}.tar.gz")]
-print(json.dumps({"tag_name": tag, "assets": assets}))
-PY
+          for n in names for f in (n + ".sha512sum", n + ".tar.gz")]
+release = {"tag_name": tag, "assets": assets}
+json.dump(release, open(os.path.join(srv, "tags", tag + ".json"), "w"))
+# The list is newest first, like GitHub's
+path = os.path.join(srv, "releases.json")
+releases = json.load(open(path)) if os.path.exists(path) else []
+json.dump([release] + releases, open(path, "w"))
+PY2
+}
+
+publish_release() {  # publish_release TAG -> x86_64 + aarch64 assets; becomes the latest release
+    build_assets "$1-x86_64" "$1-aarch64"
+    release_json "$1" "$1-aarch64" "$1-x86_64"
+    cp "$FAKE_SERVER/tags/$1.json" "$FAKE_SERVER/release.json"
+}
+
+publish_old_release() {  # publish_old_release TAG -> one unsuffixed x86_64 build, like GE-Proton9/10
+    build_assets "$1"
+    release_json "$1" "$1"
 }
 
 vdf_names() {  # print every "name" value in config.vdf, one per line
