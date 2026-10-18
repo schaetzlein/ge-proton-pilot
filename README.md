@@ -34,13 +34,15 @@ Each time you run it, the script:
    kind of PC is installed (for example an ARM build on a normal PC), it is
    marked as **"wrong type for this PC"**. If Steam is set to use one, the
    script warns you and offers to fix it.
-5. **Keeps older series up to date too.** If you also have an older series
-   installed (see [Several GE-Proton series side by side](#several-ge-proton-series-side-by-side)),
+5. **Keeps older series up to date too.** If you also use an older series
+   (see [Several GE-Proton series side by side](#several-ge-proton-series-side-by-side)),
    it offers that series' newest build and to switch the games that use it.
 6. **Offers to clean up.** If older builds are still installed, it shows how
-   much space they use and asks whether to delete them. The newest build of
-   each series and every version Steam is set to use are always kept.
-   Nothing is deleted unless you say yes.
+   much space they use and asks whether to delete them. Every version Steam
+   is set to use is always kept. An older series that no game uses, for
+   example GE-Proton10 left over from before GE-Proton11, gets its own
+   question; if you keep it, you aren't asked about it again. Nothing is
+   deleted unless you say yes.
 
 It asks a simple yes/no question before every step, and nothing changes
 without your answer.
@@ -169,18 +171,24 @@ version.
 
 From then on, each series is treated separately:
 
-- The newest build of each series is never offered for deletion, and neither
-  is any version a game is set to.
+- A version a game is set to is never offered for deletion.
+- A series you installed with `--install` is never offered for deletion.
+- An older series that no game uses is probably left over from when it was
+  the newest. Clean-up asks once whether to delete it. If you keep it, the
+  script remembers that in `~/.config/ge-proton-pilot/keep` (one series
+  number per line) and doesn't ask again. To be asked again, delete that
+  file or remove the number from it.
 - When you switch the default to a new build, only games on the same series
   can be moved along. Games on another series stay where they are, and the
   script lists them.
-- If a newer build of an older series exists, the script offers it and asks
-  whether to move that series' games to it.
+- If a newer build of an older series you use exists, the script offers it
+  and asks whether to move that series' games to it.
 
 GE-Proton9 and 10 were only made for normal (x86_64) PCs, not for ARM
-devices. To remove a whole series you no longer need, close Steam and delete
-its folder from `compatibilitytools.d` in Steam's folder (for standard Steam,
-`~/.steam/steam/compatibilitytools.d`).
+devices. To remove a series you chose to keep, close Steam and delete its
+folder from `compatibilitytools.d` in Steam's folder (for standard Steam,
+`~/.steam/steam/compatibilitytools.d`), or remove its number from the keep
+file so clean-up asks again.
 
 ## One-time setup in Steam
 
@@ -233,7 +241,7 @@ running it from other scripts or on a schedule:
 |----------------|--------------|
 | `--check`      | Only checks. Prints whether an update is available and changes nothing. |
 | `--auto`       | Installs the newest version and makes it Steam's default **without asking**. Only runs while Steam is closed. Games you set to a specific version and old versions are left alone. |
-| `--install VERSION` | Installs one specific version **without** changing Steam's default, for example for a game that needs an older one. `VERSION` is a series like `10` (its newest release) or an exact version like `GE-Proton10-34`. Steam may stay open; restart it afterwards so the version shows up. |
+| `--install VERSION` | Installs one specific version **without** changing Steam's default, for example for a game that needs an older one. `VERSION` is a series like `10` (its newest release) or an exact version like `GE-Proton10-34`. Clean-up never offers to delete that series afterwards. Steam may stay open; restart it afterwards so the version shows up. |
 | `--steam KIND` | Which Steam to use if more than one is installed: `native`, `flatpak` or `snap`. Needed with `--check`, `--auto` or `--install` in that case. |
 | `-h`, `--help` | Shows a short help text. |
 

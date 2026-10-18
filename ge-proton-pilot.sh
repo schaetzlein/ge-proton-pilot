@@ -21,6 +21,8 @@ declare -A STEAM_PATHS=(
 declare -A STEAM_LABELS=([native]="Steam (standard install)" [flatpak]="Steam (Flatpak)" [snap]="Steam (Snap)")
 STEAM_KIND="" STEAM_DIR="" COMPAT_DIR="" CONFIG_VDF="" STEAM_CMD=()
 API_URL="https://api.github.com/repos/GloriousEggroll/proton-ge-custom/releases/latest"
+# Older series the user chose to keep (one series number per line)
+KEEP_FILE="${XDG_CONFIG_HOME:-$HOME/.config}/ge-proton-pilot/keep"
 case "$(uname -m)" in aarch64|arm64) HOST_ARCH=arm ;; *) HOST_ARCH=x86 ;; esac
 
 # ---------- Look & feel ----------
@@ -486,12 +488,27 @@ switch_series() {  # switch_series NAME -> offer to move games on older builds o
     offer_start_steam
 }
 
-update_older_series() {  # update_older_series MAIN_SERIES -> offer each other installed series' last build
-    local main="$1" v s name seen=()
+keep_series() {  # keep_series SERIES -> don't offer to delete this series again
+    grep -qx "$1" "$KEEP_FILE" 2>/dev/null && return 0
+    mkdir -p "${KEEP_FILE%/*}" 2>/dev/null && echo "$1" >> "$KEEP_FILE" 2>/dev/null
+}
+
+wanted_series() {  # print each series a game or the default uses, or the user chose to keep
+    {
+        vdf_tool used 2>/dev/null | while read -r v; do series_of "$v"; done
+        cat "$KEEP_FILE" 2>/dev/null
+    } | sort -u
+}
+
+update_older_series() {  # update_older_series MAIN_SERIES -> offer each wanted older series' last build
+    local main="$1" v s name seen=() wanted=()
     declare -A newest=()
+    mapfile -t wanted < <(wanted_series)
     for v in "${usable[@]}"; do
         s=$(series_of "$v")
         [[ -z "$s" || "$s" == "$main" ]] && continue
+        # A series nobody uses is offered for deletion instead (see remove_old)
+        contains "$s" "${wanted[@]}" || continue
         contains "$s" "${seen[@]}" || seen+=("$s")
         newest[$s]="$v"  # installed_versions is sorted, so the last one is the newest
     done
@@ -510,19 +527,31 @@ update_older_series() {  # update_older_series MAIN_SERIES -> offer each other i
     done
 }
 
-remove_old() {  # offer to delete builds nothing needs: older builds of a series and wrong-type builds
-    local all=() used=() old=() kept=() v s size any_wrong=0 all_wrong=1 default=n
+cleanup_section() {  # print the clean-up heading once, a blank line after that
+    if (( cleanup_shown )); then echo; else section "Clean up"; cleanup_shown=1; fi
+}
+
+remove_old() {  # remove_old MAIN_SERIES -> offer to delete what nothing needs
+    # 1) older builds of a series and wrong-type builds, 2) older series nobody uses
+    local main="$1" all=() used=() wanted=() series=() leftover=() old=() kept=() builds=()
+    local v s size any_wrong=0 all_wrong=1 default=n cleanup_shown=0
     declare -A newest=()
     mapfile -t all < <(installed_versions)
+    mapfile -t used < <(vdf_tool used 2>/dev/null)
+    mapfile -t wanted < <(wanted_series)
     for v in "${all[@]}"; do
         wrong_arch "$v" && continue
         s=$(series_of "$v")
+        contains "$s" "${series[@]}" || series+=("$s")
         newest[x$s]="$v"  # installed_versions is sorted, so the last one is the newest
     done
-    mapfile -t used < <(vdf_tool used 2>/dev/null)
+    for s in "${series[@]}"; do
+        [[ -n "$s" && "$s" != "$main" ]] && ! contains "$s" "${wanted[@]}" && leftover+=("$s")
+    done
     for v in "${all[@]}"; do
         if ! wrong_arch "$v"; then
             s=$(series_of "$v")
+            contains "$s" "${leftover[@]}" && continue  # asked about as a whole below
             [[ "${newest[x$s]}" == "$v" ]] && continue
         fi
         if contains "$v" "${used[@]}"; then
@@ -536,34 +565,61 @@ remove_old() {  # offer to delete builds nothing needs: older builds of a series
         fi
         old+=("$v")
     done
-    [[ ${#old[@]} -gt 0 ]] || return 0
-    size=$(cd "$COMPAT_DIR" && du -sch "${old[@]}" 2>/dev/null | tail -n1 | cut -f1)
-    section "Clean up"
-    line "These older versions are still on your PC (${B}${size:-?}${R} in total):"
-    for v in "${old[@]}"; do
-        if wrong_arch "$v"; then
-            line "  • $v ${YELLOW}(wrong type for this PC)${R}"
+
+    if (( ${#old[@]} )); then
+        size=$(cd "$COMPAT_DIR" && du -sch "${old[@]}" 2>/dev/null | tail -n1 | cut -f1)
+        cleanup_section
+        line "These older versions are still on your PC (${B}${size:-?}${R} in total):"
+        for v in "${old[@]}"; do
+            if wrong_arch "$v"; then
+                line "  • $v ${YELLOW}(wrong type for this PC)${R}"
+            else
+                line "  • $v"
+            fi
+        done
+        echo
+        (( any_wrong )) && line "${D}Versions of the wrong type can't run on this PC at all.${R}"
+        if (( all_wrong )); then
+            default=y  # nothing in the list can ever be used here
         else
-            line "  • $v"
+            line "${D}No game uses them, and a newer build of the same series is installed.${R}"
+        fi
+        (( ${#kept[@]} )) && line "${D}Kept because Steam is set to use them: ${kept[*]}${R}"
+        echo
+        if ask_yes_no "Delete the older versions to free up space?" "$default"; then
+            for v in "${old[@]}"; do
+                rm -rf "${COMPAT_DIR:?}/$v" && ok "Deleted $v"
+            done
+            steam_running && warn "Restart Steam so the old versions disappear from its list."
+        else
+            line "Okay, they stay."
+        fi
+    fi
+
+    # Most likely left over from when this series was the newest; asked once per series
+    for s in "${leftover[@]}"; do
+        builds=()
+        for v in "${all[@]}"; do
+            [[ "$(series_of "$v")" == "$s" ]] && ! wrong_arch "$v" && builds+=("$v")
+        done
+        size=$(cd "$COMPAT_DIR" && du -sch "${builds[@]}" 2>/dev/null | tail -n1 | cut -f1)
+        cleanup_section
+        line "You also have GE-Proton$s (${B}${size:-?}${R}), and no game uses it:"
+        for v in "${builds[@]}"; do line "  • $v"; done
+        echo
+        line "${D}GE-Proton$s gets no more updates. Keep it only if you want it as a${R}"
+        line "${D}fallback for games that don't run well on GE-Proton$main.${R}"
+        echo
+        if ask_yes_no "Delete GE-Proton$s?" n; then
+            for v in "${builds[@]}"; do
+                rm -rf "${COMPAT_DIR:?}/$v" && ok "Deleted $v"
+            done
+            steam_running && warn "Restart Steam so it disappears from its list."
+        else
+            keep_series "$s"
+            line "Okay, it stays. You won't be asked about GE-Proton$s again."
         fi
     done
-    echo
-    (( any_wrong )) && line "${D}Versions of the wrong type can't run on this PC at all.${R}"
-    if (( all_wrong )); then
-        default=y  # nothing in the list can ever be used here
-    else
-        line "${D}No game uses them, and a newer build of the same series is installed.${R}"
-    fi
-    (( ${#kept[@]} )) && line "${D}Kept because Steam is set to use them: ${kept[*]}${R}"
-    echo
-    if ask_yes_no "Delete the older versions to free up space?" "$default"; then
-        for v in "${old[@]}"; do
-            rm -rf "${COMPAT_DIR:?}/$v" && ok "Deleted $v"
-        done
-        steam_running && warn "Restart Steam so the old versions disappear from its list."
-    else
-        line "Okay, they stay."
-    fi
 }
 
 # ---------- Main ----------
@@ -802,6 +858,7 @@ run_auto() {
 run_install() {  # install one specific version, e.g. an older series for a single game
     scan_installed
     fetch_version "$INSTALL_VERSION"
+    keep_series "$(series_of "$latest")"  # installed on purpose, so never offer to delete it
     if contains "$latest" "${usable[@]}"; then
         ok "${B}$latest${R} is already installed."
     else
@@ -817,7 +874,7 @@ run_install() {  # install one specific version, e.g. an older series for a sing
 }
 
 run_interactive() {
-    local v label offered_default=0
+    local v label offered_default=0 main_series
 
     header
     check_requirements
@@ -894,8 +951,9 @@ run_interactive() {
     fi
 
     scan_installed
-    update_older_series "$(series_of "$latest")"
-    remove_old
+    main_series=$(series_of "$latest")  # update_older_series changes $latest
+    update_older_series "$main_series"
+    remove_old "$main_series"
 
     finish 0
 }

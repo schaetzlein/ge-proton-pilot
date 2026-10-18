@@ -7,6 +7,7 @@ SCRIPT="$TESTS_DIR/../ge-proton-pilot.sh"
 setup_env() {  # setup_env -> fresh fake HOME, Steam dir and server in $WORK
     WORK=$(mktemp -d)
     export HOME="$WORK/home" FAKE_SERVER="$WORK/server" FAKE_STEAM_RUNNING="$WORK/steam.running"
+    unset XDG_CONFIG_HOME  # the keep list must land in the fake HOME
     export PATH="$TESTS_DIR/fakebin:$PATH" NO_COLOR=1 FAKE_ARCH=x86_64 FAKE_CURL_DELAY=0
     STEAM="$HOME/.steam/steam"
     mkdir -p "$STEAM/config" "$STEAM/compatibilitytools.d" "$FAKE_SERVER"
