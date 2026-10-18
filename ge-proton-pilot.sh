@@ -33,12 +33,10 @@ else
 fi
 
 header() {
-    echo
     echo "  ${B}${CYAN}╭──────────────────────────────────────────────╮${R}"
     echo "  ${B}${CYAN}│               GE-Proton Pilot                │${R}"
     echo "  ${B}${CYAN}╰──────────────────────────────────────────────╯${R}"
-    echo "  ${D}Keeps GE-Proton up to date. GE-Proton is a community${R}"
-    echo "  ${D}version of Proton that helps Windows games run on Linux.${R}"
+    echo "  ${D}Keeps GE-Proton, a community Proton for Windows games, up to date.${R}"
     echo "  ${D}GE-Proton is made by GloriousEggroll – thank you!${R}"
     echo "  ${D}https://github.com/GloriousEggroll/proton-ge-custom${R}"
 }
@@ -60,8 +58,10 @@ box() {  # box "Title" "line 1" "line 2" ...
 
 finish() {  # finish [EXIT_CODE] -> in interactive mode, wait so a double-clicked window stays open
     if [[ "${MODE:-interactive}" == interactive ]]; then
+        local done=""
+        [[ "${1:-0}" == 0 ]] && done="${B}${GREEN}All done.${R} "
         echo
-        read -rp "  Press ${B}Enter${R} to close this window... " _
+        read -rp "  ${done}Press ${B}Enter${R} to close this window... " _
     fi
     exit "${1:-0}"
 }
@@ -710,7 +710,6 @@ run_interactive() {
         remove_old ""
     fi
 
-    section "All done"
     finish 0
 }
 
