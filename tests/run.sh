@@ -19,10 +19,17 @@ ARM=GE-Proton11-9-aarch64
 
 # ---------- Interactive mode ----------
 
+publish_history() {  # the last GE-Proton9 and GE-Proton10 builds, then the current series
+    publish_old_release GE-Proton9-27
+    publish_old_release GE-Proton10-33
+    publish_old_release GE-Proton10-34
+    publish_release "$LATEST"
+}
+
 test_new_install() {
     publish_release "$LATEST"
     write_config proton_experimental
-    # install: Enter (yes) | use it for all games: Enter | start Steam: n | close: Enter
+    # install: Enter (yes) | make it the default: Enter | start Steam: n | close: Enter
     run_script '\n\nn\n\n'
     assert_status 0 &&
     assert_output "A new version is available!" &&
@@ -75,7 +82,7 @@ test_pinned_games_setall() {
     write_config "$OLD" 10="$OLD" 20=proton_9
     # install: Enter | option 1 (all games) | start Steam: n | delete old: y | close: Enter
     run_script '\n1\nn\ny\n\n'
-    assert_output "You have 1 game set to an older GE-Proton version." &&
+    assert_output "You have 1 game set to an older GE-Proton11 version." &&
     assert_mapping 0 "$NEW" &&
     assert_mapping 10 "$NEW" &&
     assert_mapping 20 proton_9
@@ -85,11 +92,100 @@ test_pinned_games_keep() {
     publish_release "$LATEST"
     add_installed "$OLD"
     write_config "$OLD" 10="$OLD"
-    # install: Enter | option 2 (leave that game) | start Steam: n | delete old: n | close
-    run_script '\n2\nn\nn\n\n'
+    # install: Enter | option 2 (leave that game) | start Steam: n | close (no clean-up: a game uses it)
+    run_script '\n2\nn\n\n'
     assert_mapping 0 "$NEW" &&
     assert_mapping 10 "$OLD" &&
-    assert_installed "$OLD"
+    assert_installed "$OLD" &&
+    assert_no_output "Clean up"
+}
+
+test_setall_leaves_other_series_alone() {
+    publish_history
+    add_installed "$OLD" GE-Proton10-34
+    write_config "$OLD" 10="$OLD" 20=GE-Proton10-34
+    # install: Enter | option 1 (all games) | start Steam: n | delete old: y | close
+    run_script '\n1\nn\ny\n\n'
+    assert_output "1 game is set to GE-Proton10-34 and stays on it." &&
+    assert_output "Use $NEW as the default, and for that game too" &&
+    assert_mapping 0 "$NEW" &&
+    assert_mapping 10 "$NEW" &&
+    assert_mapping 20 GE-Proton10-34 &&
+    assert_installed GE-Proton10-34 &&
+    assert_not_installed "$OLD"
+}
+
+test_other_series_only_is_mentioned() {
+    publish_history
+    add_installed "$OLD" GE-Proton10-34
+    write_config "$OLD" 10=GE-Proton10-34 20=GE-Proton10-34
+    # install: Enter | make it the default: Enter | start Steam: n | delete old: y | close
+    run_script '\n\nn\ny\n\n'
+    assert_output "2 games are set to GE-Proton10-34 and stay on it." &&
+    assert_no_output "1) Use" &&
+    assert_mapping 0 "$NEW" &&
+    assert_mapping 10 GE-Proton10-34 &&
+    assert_mapping 20 GE-Proton10-34
+}
+
+test_cleanup_keeps_newest_of_each_series() {
+    publish_history
+    add_installed GE-Proton9-27 GE-Proton10-33 GE-Proton10-34 "$OLD" "$NEW"
+    write_config "$NEW"
+    run_script 'y\n\n'
+    assert_output "Deleted GE-Proton10-33" &&
+    assert_output "Deleted $OLD" &&
+    assert_installed GE-Proton9-27 &&
+    assert_installed GE-Proton10-34 &&
+    assert_installed "$NEW" &&
+    assert_not_installed GE-Proton10-33
+}
+
+test_cleanup_keeps_versions_games_use() {
+    publish_history
+    add_installed GE-Proton10-33 GE-Proton10-34 "$OLD" "$NEW"
+    write_config "$NEW" 10=GE-Proton10-33
+    run_script 'y\n\n'
+    assert_output "Kept because Steam is set to use them: GE-Proton10-33" &&
+    assert_output "Deleted $OLD" &&
+    assert_installed GE-Proton10-33
+}
+
+test_older_series_is_updated_and_games_moved() {
+    publish_history
+    add_installed GE-Proton10-33 "$NEW"
+    write_config "$NEW" 10=GE-Proton10-33 20="$NEW"
+    # install 10-34: Enter | switch that game: Enter | start Steam: n | delete 10-33: y | close
+    run_script '\n\nn\ny\n\n'
+    assert_status 0 &&
+    assert_output "Everything is up to date." &&
+    assert_output "The newest GE-Proton10 is GE-Proton10-34" &&
+    assert_installed GE-Proton10-34 &&
+    assert_mapping 0 "$NEW" &&
+    assert_mapping 10 GE-Proton10-34 &&
+    assert_mapping 20 "$NEW" &&
+    assert_not_installed GE-Proton10-33
+}
+
+test_older_series_update_declined() {
+    publish_history
+    add_installed GE-Proton10-33 "$NEW"
+    write_config "$NEW"
+    run_script 'n\n\n'
+    assert_output "Okay, nothing was installed." &&
+    assert_not_downloaded GE-Proton10-34.tar.gz &&
+    assert_installed GE-Proton10-33 &&
+    assert_no_output "Clean up"
+}
+
+test_older_series_already_newest() {
+    publish_history
+    add_installed GE-Proton9-27 GE-Proton10-34 "$NEW"
+    write_config "$NEW"
+    run_script '\n'
+    assert_status 0 &&
+    assert_no_output "Update GE-Proton" &&
+    assert_no_output "Clean up"
 }
 
 test_closes_and_restarts_running_steam() {
@@ -125,7 +221,7 @@ test_wrong_arch_default_fixed_without_update() {
     # install: n | switch to the usable older version: Enter | start Steam: n | delete: Enter | close
     run_script 'n\n\nn\n\n\n'
     assert_output "Okay, nothing was installed." &&
-    assert_output "Use $OLD for your games" &&
+    assert_output "Make $OLD the default" &&
     assert_mapping 0 "$OLD" &&
     assert_installed "$OLD" &&
     assert_not_installed "$ARM"
@@ -271,6 +367,77 @@ test_unknown_option() {
     run_script '' --bogus
     assert_status 2 &&
     assert_output "Unknown option: --bogus"
+}
+
+# ---------- --install ----------
+
+test_install_newest_of_old_series() {
+    publish_history
+    write_config "$NEW" 10="$NEW"
+    run_script '' --install 10
+    assert_status 0 &&
+    assert_installed GE-Proton10-34 &&
+    assert_not_downloaded GE-Proton10-33.tar.gz &&
+    assert_output "Steam's default was not changed" &&
+    assert_mapping 0 "$NEW" &&
+    assert_mapping 10 "$NEW" &&
+    assert_backups 0
+}
+
+test_install_exact_version() {
+    publish_history
+    write_config "$NEW"
+    run_script '' --install GE-Proton9-27
+    assert_status 0 &&
+    assert_installed GE-Proton9-27 &&
+    assert_output "Installed GE-Proton9-27"
+}
+
+test_install_already_installed() {
+    publish_history
+    add_installed GE-Proton10-34
+    write_config "$NEW"
+    run_script '' --install=10
+    assert_status 0 &&
+    assert_output "GE-Proton10-34 is already installed." &&
+    assert_not_downloaded GE-Proton10-34.tar.gz
+}
+
+test_install_while_steam_runs() {
+    publish_history
+    write_config "$NEW"
+    touch "$FAKE_STEAM_RUNNING"
+    run_script '' --install 10
+    assert_status 0 &&
+    assert_installed GE-Proton10-34 &&
+    assert_output "Restart Steam so GE-Proton10-34 shows up"
+}
+
+test_install_unknown_version() {
+    publish_history
+    write_config "$NEW"
+    run_script '' --install 8
+    assert_status 1 &&
+    assert_output "GitHub has no GE-Proton release called GE-Proton8." &&
+    run_script '' --install GE-Proton10-99
+    assert_status 1 &&
+    assert_output "GitHub has no GE-Proton release called GE-Proton10-99."
+}
+
+test_install_old_series_on_arm() {
+    export FAKE_ARCH=aarch64
+    publish_history
+    write_config "$ARM"
+    run_script '' --install 10
+    assert_status 1 &&
+    assert_output "GE-Proton10 has no build for this type of PC." &&
+    assert_not_installed GE-Proton10-34
+}
+
+test_install_bad_argument() {
+    run_script '' --install latest
+    assert_status 2 &&
+    assert_output "--install needs a series like 10"
 }
 
 # ---------- GitHub errors ----------

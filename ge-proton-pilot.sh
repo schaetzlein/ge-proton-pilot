@@ -94,7 +94,8 @@ ask_choice() {  # ask_choice MAX -> prints the chosen number
 
 # ---------- Steam's config.vdf ----------
 
-vdf_tool() {  # vdf_tool get | pinned NAME | set NAME | setall NAME
+vdf_tool() {  # vdf_tool get | used | pinned NAME | otherseries NAME | set NAME | setall NAME | moveseries NAME
+    # A series is the number after GE-Proton (GE-Proton10-34 -> 10)
     # Exit code 3 = Steam has no compatibility setting stored yet
     python3 - "$CONFIG_VDF" "$@" <<'PY'
 import sys, re, os
@@ -142,40 +143,68 @@ m_open, m_close = mapping
 default = find_block(text, "0", m_open + 1, m_close)
 name_re = re.compile(r'("name"\s*")([^"]*)(")', re.I)
 
+def series(name):
+    m = re.match(r"GE-Proton(\d+)-", name or "", re.I)
+    return m.group(1) if m else None
+
+def older_in_series(name):
+    """True for a different build of the same series as new_name."""
+    return name != new_name and series(name) is not None and series(name) == series(new_name)
+
 if mode == "get":
     if default:
         m = name_re.search(text, default[0], default[1])
         print(m.group(2) if m else "")
     sys.exit(0)
 
+if mode == "used":
+    # Every tool Steam is set to use, the default included
+    for m in name_re.finditer(text, m_open, m_close):
+        print(m.group(2))
+    sys.exit(0)
+
 if mode == "pinned":
-    # Count games (not the global default) set to a different GE-Proton version
+    # Count games (not the global default) set to another build of the same series
     count = 0
     for m in name_re.finditer(text, m_open, m_close):
         if default and default[0] <= m.start() <= default[1]:
             continue
-        if m.group(2).lower().startswith("ge-proton") and m.group(2) != new_name:
+        if older_in_series(m.group(2)):
             count += 1
     print(count)
     sys.exit(0)
 
-# --- set / setall ---
-if mode == "setall":
+if mode == "otherseries":
+    # "COUNT NAME" for each GE-Proton build of another series that games are set to
+    counts = {}
+    for m in name_re.finditer(text, m_open, m_close):
+        if default and default[0] <= m.start() <= default[1]:
+            continue
+        if series(m.group(2)) not in (None, series(new_name)):
+            counts[m.group(2)] = counts.get(m.group(2), 0) + 1
+    for name, count in sorted(counts.items()):
+        print(count, name)
+    sys.exit(0)
+
+# --- set / setall / moveseries ---
+if mode in ("setall", "moveseries"):
+    # Switch everything on another build of the same series; other series stay as they are
     block = text[m_open:m_close]
-    block = re.sub(r'("name"\s*")(GE-Proton[^"]*)(")',
-                   lambda m: m.group(1) + new_name + m.group(3), block, flags=re.I)
+    block = name_re.sub(lambda m: m.group(1) + (new_name if older_in_series(m.group(2)) else m.group(2))
+                        + m.group(3), block)
     text = text[:m_open] + block + text[m_close:]
     m_close = m_open + len(block)
     default = find_block(text, "0", m_open + 1, m_close)
 
-if default:
+# moveseries leaves the default alone unless it was on the same series
+if mode != "moveseries" and default:
     m = name_re.search(text, default[0], default[1])
     if m:
         text = text[:m.start(2)] + new_name + text[m.end(2):]
     else:
         ins = default[0] + 1
         text = text[:ins] + '\n\t\t\t\t\t\t"name"\t\t"%s"' % new_name + text[ins:]
-else:
+elif mode != "moveseries":
     entry = ('\n\t\t\t\t\t"0"\n\t\t\t\t\t{\n'
              '\t\t\t\t\t\t"name"\t\t"%s"\n'
              '\t\t\t\t\t\t"config"\t\t""\n'
@@ -288,6 +317,10 @@ wrong_arch() {  # wrong_arch NAME -> success if this build can't run on this PC
     [[ "$build" != "$HOST_ARCH" ]]
 }
 
+series_of() {  # series_of NAME -> the series number (GE-Proton10-34 -> 10), empty if none
+    [[ "$1" =~ ^GE-Proton([0-9]+)- ]] && echo "${BASH_REMATCH[1]}"
+}
+
 installed_versions() {
     [[ -d "$COMPAT_DIR" ]] || return 0
     find "$COMPAT_DIR" -mindepth 1 -maxdepth 1 -type d -name 'GE-Proton*' -printf '%f\n' | sort -V
@@ -366,8 +399,9 @@ backup_config() {  # safety copy of Steam's settings (only the 3 newest are kept
 }
 
 set_default() {  # set_default NAME
-    local name="$1" mode="set" pinned choice
-    section "Use $name for your games"
+    local name="$1" mode="set" pinned choice series
+    series=$(series_of "$name")
+    section "Make $name the default"
 
     # Steam has never stored a compatibility choice -> it must be done once by hand
     vdf_tool get >/dev/null 2>&1
@@ -378,14 +412,25 @@ set_default() {  # set_default NAME
     fi
 
     pinned=$(vdf_tool pinned "$name" 2>/dev/null || echo 0)
-    if [[ "$pinned" =~ ^[0-9]+$ ]] && (( pinned > 0 )); then
-        local games="$pinned games" these="those $pinned games"
-        (( pinned == 1 )) && games="1 game" && these="that game"
-        line "You have ${B}$games${R} set to an older GE-Proton version."
+    [[ "$pinned" =~ ^[0-9]+$ ]] || pinned=0
+    local games="$pinned games" these="those $pinned games"
+    (( pinned == 1 )) && games="1 game" && these="that game"
+    line "${D}Steam uses the default for every game you haven't set to a version yourself.${R}"
+    echo
+    (( pinned > 0 )) && line "You have ${B}$games${R} set to an older GE-Proton$series version."
+    # Games on another series were set to it on purpose, so they are only mentioned
+    local count other
+    while read -r count other; do
+        if (( count == 1 )); then
+            line "1 game is set to ${B}$other${R} and stays on it."
+        else
+            line "$count games are set to ${B}$other${R} and stay on it."
+        fi
+    done < <(vdf_tool otherseries "$name" 2>/dev/null)
+    if (( pinned > 0 )); then
         echo
-        line "${B}1)${R} Use $name for all games ${GREEN}(recommended)${R}"
-        line "   ${D}${these^} will be switched to it too.${R}"
-        line "${B}2)${R} Use $name for all games, but leave $these as before"
+        line "${B}1)${R} Use $name as the default, and for $these too ${GREEN}(recommended)${R}"
+        line "${B}2)${R} Use $name as the default, but leave $these as before"
         line "${B}3)${R} Don't change anything"
         echo
         choice=$(ask_choice 3)
@@ -395,7 +440,7 @@ set_default() {  # set_default NAME
             3) line "Okay, nothing was changed."; return 0 ;;
         esac
     else
-        ask_yes_no "Should Steam use $name for all games?" y || {
+        ask_yes_no "Should Steam use $name as the default?" y || {
             line "Okay, nothing was changed."
             return 0
         }
@@ -406,7 +451,7 @@ set_default() {  # set_default NAME
     backup_config || { offer_start_steam; return 1; }
 
     if vdf_tool "$mode" "$name"; then
-        ok "Done! Steam now uses ${B}$name${R} for your games."
+        ok "Done! Steam now uses ${B}$name${R} as the default."
     else
         fail "The setting could not be saved. Your Steam settings were not changed."
         manual_setup_box "$name"
@@ -414,15 +459,79 @@ set_default() {  # set_default NAME
     offer_start_steam
 }
 
-remove_old() {  # remove_old KEEP_NAME (empty KEEP_NAME: only offer wrong-type builds)
-    local keep="$1" all=() old=() v size any_wrong=0 all_wrong=1 default=n
+switch_series() {  # switch_series NAME -> offer to move games on older builds of NAME's series to it
+    local name="$1" series current pinned default_too=0
+    (( has_mapping )) || return 0
+    series=$(series_of "$name")
+    pinned=$(vdf_tool pinned "$name" 2>/dev/null || echo 0)
+    [[ "$pinned" =~ ^[0-9]+$ ]] || pinned=0
+    current=$(vdf_tool get 2>/dev/null)
+    [[ "$current" != "$name" && "$(series_of "$current")" == "$series" ]] && default_too=1
+    (( pinned + default_too > 0 )) || return 0
+    echo
+    if (( pinned > 0 )); then
+        local games="$pinned games"
+        (( pinned == 1 )) && games="1 game"
+        line "You have ${B}$games${R} set to an older GE-Proton$series version."
+    fi
+    (( default_too )) && line "Steam's default is ${B}$current${R}."
+    ask_yes_no "Switch them to $name?" y || { line "Okay, they stay as they are."; return 0; }
+    close_steam || { line "Nothing was changed."; return 1; }
+    backup_config || { offer_start_steam; return 1; }
+    if vdf_tool moveseries "$name"; then
+        ok "Done! They now use ${B}$name${R}."
+    else
+        fail "The setting could not be saved. Your Steam settings were not changed."
+    fi
+    offer_start_steam
+}
+
+update_older_series() {  # update_older_series MAIN_SERIES -> offer each other installed series' last build
+    local main="$1" v s name seen=()
+    declare -A newest=()
+    for v in "${usable[@]}"; do
+        s=$(series_of "$v")
+        [[ -z "$s" || "$s" == "$main" ]] && continue
+        contains "$s" "${seen[@]}" || seen+=("$s")
+        newest[$s]="$v"  # installed_versions is sorted, so the last one is the newest
+    done
+    for s in "${seen[@]}"; do
+        fetch_version "$s"
+        name="$latest"
+        [[ "$name" == "${newest[$s]}" ]] && continue
+        section "Update GE-Proton$s"
+        line "You have ${B}${newest[$s]}${R}. The newest GE-Proton$s is ${B}$name${R}."
+        echo
+        if ask_yes_no "Download and install $name now? (about ${size_mb:-?} MB)" y; then
+            install_version "$name" "$tar_url" "$sum_url" "${size_bytes:-0}" && switch_series "$name"
+        else
+            line "Okay, nothing was installed."
+        fi
+    done
+}
+
+remove_old() {  # offer to delete builds nothing needs: older builds of a series and wrong-type builds
+    local all=() used=() old=() kept=() v s size any_wrong=0 all_wrong=1 default=n
+    declare -A newest=()
     mapfile -t all < <(installed_versions)
     for v in "${all[@]}"; do
-        [[ "$v" == "$keep" ]] && continue
+        wrong_arch "$v" && continue
+        s=$(series_of "$v")
+        newest[x$s]="$v"  # installed_versions is sorted, so the last one is the newest
+    done
+    mapfile -t used < <(vdf_tool used 2>/dev/null)
+    for v in "${all[@]}"; do
+        if ! wrong_arch "$v"; then
+            s=$(series_of "$v")
+            [[ "${newest[x$s]}" == "$v" ]] && continue
+        fi
+        if contains "$v" "${used[@]}"; then
+            kept+=("$v")
+            continue
+        fi
         if wrong_arch "$v"; then
             any_wrong=1
         else
-            [[ -z "$keep" ]] && continue
             all_wrong=0
         fi
         old+=("$v")
@@ -442,11 +551,10 @@ remove_old() {  # remove_old KEEP_NAME (empty KEEP_NAME: only offer wrong-type b
     (( any_wrong )) && line "${D}Versions of the wrong type can't run on this PC at all.${R}"
     if (( all_wrong )); then
         default=y  # nothing in the list can ever be used here
-    elif (( any_wrong )); then
-        line "${D}You only need the others if you set a game to one of them yourself.${R}"
     else
-        line "${D}You only need them if you set a game to one of these versions yourself.${R}"
+        line "${D}No game uses them, and a newer build of the same series is installed.${R}"
     fi
+    (( ${#kept[@]} )) && line "${D}Kept because Steam is set to use them: ${kept[*]}${R}"
     echo
     if ask_yes_no "Delete the older versions to free up space?" "$default"; then
         for v in "${old[@]}"; do
@@ -474,6 +582,12 @@ Options:
   --auto           Install the newest version and make it Steam's default
                    without asking. Steam must be closed. Games set to a
                    specific version and old versions are left alone.
+  --install VERSION
+                   Install one specific version without changing Steam's
+                   default, e.g. for a game that needs an older one.
+                   VERSION is a series like 10 (its newest release) or an
+                   exact version like GE-Proton10-34. Old series such as
+                   9 and 10 are finished and get no more updates.
   --steam KIND     Which Steam to use if more than one is installed:
                    native, flatpak or snap.
   -h, --help       Show this help.
@@ -526,37 +640,50 @@ scan_installed() {  # sets installed, usable, current_default, default_wrong, ha
     return 0
 }
 
-fetch_release() {  # sets latest, tar_url, sum_url, size_mb, size_bytes
-    local release_json status remaining reset tmp
+api_get() {  # api_get URL -> sets API_BODY; returns 1 if GitHub has nothing there (404)
+    local status remaining reset tmp
     tmp=$(mktemp -d)
-    if ! status=$(curl -sSL -D "$tmp/headers" -o "$tmp/body" -w '%{http_code}' "$API_URL" 2>/dev/null); then
+    if ! status=$(curl -sSL -D "$tmp/headers" -o "$tmp/body" -w '%{http_code}' "$1" 2>/dev/null); then
         rm -rf "$tmp"
         fail "Couldn't reach GitHub. Please check your internet connection and try again."
         finish 1
     fi
-    release_json=$(<"$tmp/body")
+    API_BODY=$(<"$tmp/body")
     # With redirects there can be several header blocks; the last one counts
     remaining=$(grep -i '^x-ratelimit-remaining:' "$tmp/headers" | tail -n1 | tr -dc '0-9')
     reset=$(grep -i '^x-ratelimit-reset:' "$tmp/headers" | tail -n1 | tr -dc '0-9')
     rm -rf "$tmp"
-    if [[ "$status" != 200 ]]; then
-        if [[ "$status" == 429 || ( "$status" == 403 && "$remaining" == 0 ) ]]; then
-            fail "GitHub is getting too many update checks from your internet connection."
-            if [[ -n "$reset" ]] && reset=$(date -d "@$reset" +%H:%M 2>/dev/null); then
-                line "This is a temporary limit. Please try again after ${B}$reset${R}."
-            else
-                line "This is a temporary limit. Please try again in an hour."
-            fi
+    [[ "$status" == 200 ]] && return 0
+    [[ "$status" == 404 ]] && return 1
+    if [[ "$status" == 429 || ( "$status" == 403 && "$remaining" == 0 ) ]]; then
+        fail "GitHub is getting too many update checks from your internet connection."
+        if [[ -n "$reset" ]] && reset=$(date -d "@$reset" +%H:%M 2>/dev/null); then
+            line "This is a temporary limit. Please try again after ${B}$reset${R}."
         else
-            fail "GitHub answered with an error (code $status)."
-            line "This is usually temporary. Please try again later."
+            line "This is a temporary limit. Please try again in an hour."
         fi
-        finish 1
+    else
+        fail "GitHub answered with an error (code $status)."
+        line "This is usually temporary. Please try again later."
     fi
-    read -r latest tar_url sum_url size_mb size_bytes < <(python3 -c '
+    finish 1
+}
+
+parse_release() {  # parse_release [MAJOR] < JSON -> prints "NAME TAR_URL SUM_URL SIZE_MB SIZE_BYTES"
+    # Reads one release, or with MAJOR a list of releases and picks the newest of that series.
+    # Exit code 2 = the list is empty, 3 = no such series in the list, 4 = no build for this PC
+    python3 -c '
 import json, re, sys
-arch = sys.argv[1]
+arch, major = sys.argv[1], sys.argv[2]
 d = json.load(sys.stdin)
+if major:
+    if not d:
+        sys.exit(2)
+    series = [(int(m.group(1)), r) for r in d
+              for m in [re.fullmatch(r"GE-Proton%s-(\d+)" % major, r.get("tag_name", ""))] if m]
+    if not series:
+        sys.exit(3)
+    d = max(series, key=lambda s: s[0])[1]
 assets = d.get("assets", [])
 urls = [a["browser_download_url"] for a in assets]
 is_arm = lambda u: re.search(r"aarch64|arm64", u.rsplit("/", 1)[-1], re.I)
@@ -564,6 +691,8 @@ want_arm = arch in ("aarch64", "arm64")
 tars = [a for a in assets
         if a["browser_download_url"].endswith(".tar.gz")
         and bool(is_arm(a["browser_download_url"])) == want_arm]
+if d.get("tag_name") and assets and not tars:
+    sys.exit(4)
 tar = tars[0]["browser_download_url"] if tars else ""
 size_bytes = tars[0].get("size", 0) if tars else 0
 size = round(size_bytes / 1e6)
@@ -575,12 +704,56 @@ if sha not in urls:
 # and the name Steam uses for the tool; it can differ from the release tag
 name = tar.rsplit("/", 1)[-1][:-len(".tar.gz")] if tar and d.get("tag_name") else ""
 print(name, tar, sha, size, size_bytes)
-' "$(uname -m)" <<<"$release_json")
+' "$(uname -m)" "${1:-}"
+}
 
+unreadable_release() {
+    fail "The update information from GitHub couldn't be read."
+    line "Please try again later."
+    finish 1
+}
+
+fetch_release() {  # sets latest, tar_url, sum_url, size_mb, size_bytes
+    api_get "$API_URL" || unreadable_release
+    read -r latest tar_url sum_url size_mb size_bytes < <(parse_release <<<"$API_BODY")
     if [[ -z "${latest:-}" || -z "${tar_url:-}" || -z "${sum_url:-}" ]]; then
-        fail "The update information from GitHub couldn't be read."
-        line "Please try again later."
-        finish 1
+        unreadable_release
+    fi
+}
+
+fetch_version() {  # fetch_version VERSION (e.g. 10 or GE-Proton10-34) -> like fetch_release
+    local version="$1" major="" page info status
+    if [[ "$version" =~ ^[0-9]+$ ]]; then
+        # Newest release of that series; the list is sorted newest first
+        major="$version"
+        for page in 1 2 3 4 5; do
+            api_get "${API_URL%/latest}?per_page=100&page=$page" || unreadable_release
+            info=$(parse_release "$major" <<<"$API_BODY"); status=$?
+            (( status == 3 )) && continue
+            break
+        done
+        version="GE-Proton$major"
+    else
+        if api_get "${API_URL%/latest}/tags/$version"; then
+            info=$(parse_release <<<"$API_BODY"); status=$?
+        else
+            status=3
+        fi
+    fi
+    case $status in
+        0) ;;
+        2|3)
+            fail "GitHub has no GE-Proton release called ${B}$version${R}."
+            line "Check the name on ${B}github.com/GloriousEggroll/proton-ge-custom/releases${R}."
+            finish 1 ;;
+        4)
+            fail "${B}$version${R} has no build for this type of PC."
+            finish 1 ;;
+        *) unreadable_release ;;
+    esac
+    read -r latest tar_url sum_url size_mb size_bytes <<<"$info"
+    if [[ -z "${latest:-}" || -z "${tar_url:-}" || -z "${sum_url:-}" ]]; then
+        unreadable_release
     fi
 }
 
@@ -619,11 +792,28 @@ run_auto() {
     fi
     backup_config || exit 1
     if vdf_tool set "$latest"; then
-        ok "Steam now uses ${B}$latest${R} for your games."
+        ok "Steam now uses ${B}$latest${R} as the default."
     else
         fail "The setting could not be saved. Your Steam settings were not changed."
         exit 1
     fi
+}
+
+run_install() {  # install one specific version, e.g. an older series for a single game
+    scan_installed
+    fetch_version "$INSTALL_VERSION"
+    if contains "$latest" "${usable[@]}"; then
+        ok "${B}$latest${R} is already installed."
+    else
+        install_version "$latest" "$tar_url" "$sum_url" "${size_bytes:-0}" || exit 1
+        steam_running && warn "Restart Steam so $latest shows up in its list."
+    fi
+    line "Steam's default was not changed. To use $latest for one game:"
+    line "  ${B}1.${R} In your Steam library, right-click the game → ${B}Properties${R}."
+    line "  ${B}2.${R} Click ${B}Compatibility${R} and turn on ${B}Force the use of a specific${R}"
+    line "     ${B}Steam Play compatibility tool${R}."
+    line "  ${B}3.${R} Choose ${B}$latest${R} in the list."
+    exit 0
 }
 
 run_interactive() {
@@ -703,21 +893,20 @@ run_interactive() {
         fi
     fi
 
-    mapfile -t installed < <(installed_versions)
-    if contains "$latest" "${installed[@]}"; then
-        remove_old "$latest"
-    else
-        remove_old ""
-    fi
+    scan_installed
+    update_older_series "$(series_of "$latest")"
+    remove_old
 
     finish 0
 }
 
-MODE=interactive STEAM_CHOICE=""
+MODE=interactive STEAM_CHOICE="" INSTALL_VERSION=""
 while [[ $# -gt 0 ]]; do
     case "$1" in
         --check)   MODE=check ;;
         --auto)    MODE=auto ;;
+        --install) MODE=install INSTALL_VERSION="${2:-}"; shift ;;
+        --install=*) MODE=install INSTALL_VERSION="${1#*=}" ;;
         --steam)   STEAM_CHOICE="${2:-}"; shift ;;
         --steam=*) STEAM_CHOICE="${1#*=}" ;;
         -h|--help) usage; exit 0 ;;
@@ -729,9 +918,14 @@ if [[ -n "$STEAM_CHOICE" && -z "${STEAM_PATHS[$STEAM_CHOICE]+set}" ]]; then
     echo "--steam must be native, flatpak or snap (not \"$STEAM_CHOICE\")." >&2
     exit 2
 fi
+if [[ "$MODE" == install && ! "$INSTALL_VERSION" =~ ^([0-9]+|GE-Proton[0-9]+-[0-9]+)$ ]]; then
+    echo "--install needs a series like 10 or a version like GE-Proton10-34 (not \"$INSTALL_VERSION\")." >&2
+    exit 2
+fi
 
 case "$MODE" in
     check) check_requirements; run_check ;;
     auto)  check_requirements; run_auto ;;
+    install) check_requirements; run_install ;;
     *)     run_interactive ;;
 esac

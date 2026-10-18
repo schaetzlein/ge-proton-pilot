@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # Fake curl: serves files from $FAKE_SERVER by URL basename.
-# The GitHub API URL maps to $FAKE_SERVER/release.json and answers with
+# GitHub API URLs map to $FAKE_SERVER/release.json (latest), tags/TAG.json and
+# releases.json (page 1 of the list; later pages are empty), answering with
 # HTTP $FAKE_API_STATUS (default 200) plus the header lines in $FAKE_API_HEADERS.
 # FAKE_OFFLINE=1 simulates no network. Downloads with -o are written in
 # chunks (FAKE_CURL_DELAY seconds apart) so the progress bar can be seen.
@@ -19,7 +20,12 @@ echo "$url" >> "$FAKE_SERVER/requests.log"
 status=200
 case "$url" in
     https://api.github.com/*)
-        src="$FAKE_SERVER/release.json"
+        case "$url" in
+            */releases/latest) src="$FAKE_SERVER/release.json" ;;
+            */releases/tags/*) src="$FAKE_SERVER/tags/${url##*/}.json" ;;
+            *'page=1')         src="$FAKE_SERVER/releases.json" ;;
+            *)                 src="$FAKE_SERVER/empty.json"; echo '[]' > "$src" ;;
+        esac
         status="${FAKE_API_STATUS:-200}"
         if [[ "$status" != 200 ]]; then
             src="$FAKE_SERVER/error.json"
