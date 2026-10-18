@@ -37,7 +37,12 @@ Each time you run it, the script:
 5. **Keeps older series up to date too.** If you also use an older series
    (see [Several GE-Proton series side by side](#several-ge-proton-series-side-by-side)),
    it offers that series' newest build and to switch the games that use it.
-6. **Offers to clean up.** If older builds are still installed, it shows how
+6. **Offers older series to test with.** If a game crashes or runs badly,
+   an older series sometimes works better. The script asks whether to
+   install the two series before the current one (for example GE-Proton10
+   and GE-Proton9) if you don't have them yet. The answer is no unless you
+   type `y`.
+7. **Offers to clean up.** If older builds are still installed, it shows how
    much space they use and asks whether to delete them. Every version Steam
    is set to use is always kept. An older series that no game uses, for
    example GE-Proton10 left over from before GE-Proton11, gets its own
@@ -157,7 +162,15 @@ Steam's default.
 
 If a game works better with an older series, you can keep that series
 installed next to the current one and switch games between them in Steam.
-To install an older series, run:
+A normal run offers the two series before the current one if they aren't
+installed yet:
+
+```text
+  ➜ Install GE-Proton10 or GE-Proton9 as well, to test a game with it? [y/N]
+```
+
+Answer `y`, then choose which of them to install. To install any other
+series or an exact version, run:
 
 ```bash
 ./ge-proton-pilot.sh --install 10              # newest GE-Proton10 (GE-Proton10-34)
@@ -172,7 +185,8 @@ version.
 From then on, each series is treated separately:
 
 - A version a game is set to is never offered for deletion.
-- A series you installed with `--install` is never offered for deletion.
+- A series you installed with `--install` or through the question above is
+  never offered for deletion.
 - An older series that no game uses is probably left over from when it was
   the newest. Clean-up asks once whether to delete it. If you keep it, the
   script remembers that in `~/.config/ge-proton-pilot/keep` (one series

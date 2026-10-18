@@ -3,6 +3,7 @@
 # - Checks GitHub for the newest GE-Proton release
 # - Installs it (with checksum verification)
 # - Sets it as Steam's default compatibility tool
+# - Offers older series (e.g. GE-Proton10) to test a game with
 # - Optionally removes old GE-Proton versions
 # Asks before every step; see --help for --check and --auto.
 #
@@ -527,6 +528,46 @@ update_older_series() {  # update_older_series MAIN_SERIES -> offer each wanted 
     done
 }
 
+per_game_steps() {  # per_game_steps NAME -> how to set one game to NAME in Steam
+    line "Steam's default was not changed. To use $1 for one game:"
+    line "  ${B}1.${R} In your Steam library, right-click the game → ${B}Properties${R}."
+    line "  ${B}2.${R} Click ${B}Compatibility${R} and turn on ${B}Force the use of a specific${R}"
+    line "     ${B}Steam Play compatibility tool${R}."
+    line "  ${B}3.${R} Choose ${B}$1${R} in the list."
+}
+
+offer_older_series() {  # offer_older_series MAIN_SERIES -> install the two series before it to test a game
+    local main="$1" s v missing=() names=() list
+    for s in $(( main - 1 )) $(( main - 2 )); do
+        (( s > 0 )) || continue
+        # GE-Proton10 and older were only made for x86_64
+        [[ "$HOST_ARCH" == arm ]] && (( s <= 10 )) && continue
+        for v in "${usable[@]}"; do [[ "$(series_of "$v")" == "$s" ]] && continue 2; done
+        missing+=("$s")
+    done
+    (( ${#missing[@]} )) || return 0
+    list="GE-Proton${missing[0]}"
+    (( ${#missing[@]} > 1 )) && list+=" or GE-Proton${missing[1]}"
+    echo
+    ask_yes_no "Install $list as well, to test a game with it?" n || return 0
+    for s in "${missing[@]}"; do
+        fetch_version "$s"
+        if (( ${#missing[@]} > 1 )); then
+            echo
+            ask_yes_no "Install $latest? (about ${size_mb:-?} MB)" y || continue
+        fi
+        install_version "$latest" "$tar_url" "$sum_url" "${size_bytes:-0}" || continue
+        keep_series "$s"  # installed on purpose, so never offer to delete it
+        names+=("$latest")
+    done
+    (( ${#names[@]} )) || return 0
+    echo
+    steam_running && warn "Restart Steam so the new versions show up in its list."
+    list="${names[0]}"
+    (( ${#names[@]} > 1 )) && list+=" or ${names[1]}"
+    per_game_steps "$list"
+}
+
 cleanup_section() {  # print the clean-up heading once, a blank line after that
     if (( cleanup_shown )); then echo; else section "Clean up"; cleanup_shown=1; fi
 }
@@ -630,7 +671,8 @@ GE-Proton Pilot - keeps GE-Proton up to date for Steam on Linux.
 
 Usage: ${0##*/} [OPTION]
 
-Without options, the tool asks before every step.
+Without options, the tool asks before every step. It also offers the two
+GE-Proton series before the current one, to test a game that runs badly.
 
 Options:
   --check          Only check for an update. Exit code 0 = nothing to do,
@@ -865,11 +907,7 @@ run_install() {  # install one specific version, e.g. an older series for a sing
         install_version "$latest" "$tar_url" "$sum_url" "${size_bytes:-0}" || exit 1
         steam_running && warn "Restart Steam so $latest shows up in its list."
     fi
-    line "Steam's default was not changed. To use $latest for one game:"
-    line "  ${B}1.${R} In your Steam library, right-click the game → ${B}Properties${R}."
-    line "  ${B}2.${R} Click ${B}Compatibility${R} and turn on ${B}Force the use of a specific${R}"
-    line "     ${B}Steam Play compatibility tool${R}."
-    line "  ${B}3.${R} Choose ${B}$latest${R} in the list."
+    per_game_steps "$latest"
     exit 0
 }
 
@@ -953,6 +991,8 @@ run_interactive() {
     scan_installed
     main_series=$(series_of "$latest")  # update_older_series changes $latest
     update_older_series "$main_series"
+    scan_installed
+    offer_older_series "$main_series"
     remove_old "$main_series"
 
     finish 0
