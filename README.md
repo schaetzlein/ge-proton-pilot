@@ -46,6 +46,11 @@ without your answer.
   - as a **Snap**
 
   If more than one is installed, the script asks which one to use.
+
+  > **Note:** Flatpak and Snap support has so far only been tested in the
+  > automated tests, not with a real Flatpak or Snap Steam. If something
+  > doesn't work there, please
+  > [open an issue](https://github.com/schaetzlein/ge-proton-pilot/issues).
 - **curl** and **python3**, which most Linux systems already have. If one is
   missing, the script tells you which one and how to install it, for example:
 
@@ -112,10 +117,10 @@ To start the tool by double-clicking an icon on your desktop, open a terminal
 in the folder where `ge-proton-pilot.sh` is and run:
 
 ```bash
-ln -s "$PWD/ge-proton-pilot.sh" "$(xdg-user-dir DESKTOP)/"
+ln -s "$PWD/ge-proton-pilot.sh" "$(xdg-user-dir DESKTOP)/GE-Proton Pilot"
 ```
 
-This puts a link to the script on your desktop. `xdg-user-dir DESKTOP` finds
+This puts a link called **GE-Proton Pilot** on your desktop. `xdg-user-dir DESKTOP` finds
 your desktop folder, even if it has a different name in your language
 (for example `Schreibtisch`). Because it's a link, don't move or delete the
 original file afterwards.
