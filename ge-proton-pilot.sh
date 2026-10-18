@@ -392,7 +392,10 @@ size = round(tars[0].get("size", 0) / 1e6) if tars else 0
 sha = tar[:-len(".tar.gz")] + ".sha512sum" if tar else ""
 if sha not in urls:
     sha = ""
-print(d.get("tag_name", ""), tar, sha, size)
+# The archive name (e.g. GE-Proton11-9-x86_64) is also the folder it unpacks to
+# and the name Steam uses for the tool; it can differ from the release tag
+name = tar.rsplit("/", 1)[-1][:-len(".tar.gz")] if tar and d.get("tag_name") else ""
+print(name, tar, sha, size)
 ' "$(uname -m)" <<<"$release_json")
 
 if [[ -z "${latest:-}" || -z "${tar_url:-}" || -z "${sum_url:-}" ]]; then
