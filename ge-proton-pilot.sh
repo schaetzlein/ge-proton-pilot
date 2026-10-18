@@ -11,6 +11,7 @@ STEAM_DIR="$HOME/.steam/steam"
 COMPAT_DIR="$STEAM_DIR/compatibilitytools.d"
 CONFIG_VDF="$STEAM_DIR/config/config.vdf"
 API_URL="https://api.github.com/repos/GloriousEggroll/proton-ge-custom/releases/latest"
+case "$(uname -m)" in aarch64|arm64) HOST_ARCH=arm ;; *) HOST_ARCH=x86 ;; esac
 
 # ---------- Look & feel ----------
 
@@ -233,6 +234,13 @@ contains() {  # contains NEEDLE ITEM... -> success if NEEDLE is one of the items
     return 1
 }
 
+wrong_arch() {  # wrong_arch NAME -> success if this build can't run on this PC
+    # Builds without an aarch64/arm64 suffix are x86_64 (older releases had no suffix)
+    local build=x86
+    [[ "${1,,}" =~ aarch64|arm64 ]] && build=arm
+    [[ "$build" != "$HOST_ARCH" ]]
+}
+
 installed_versions() {
     [[ -d "$COMPAT_DIR" ]] || return 0
     find "$COMPAT_DIR" -mindepth 1 -maxdepth 1 -type d -name 'GE-Proton*' -printf '%f\n' | sort -V
@@ -319,16 +327,28 @@ set_default() {  # set_default NAME
     offer_start_steam
 }
 
-remove_old() {  # remove_old KEEP_NAME
-    local keep="$1" old=() v size
-    mapfile -t old < <(installed_versions | grep -vx "$keep")
+remove_old() {  # remove_old KEEP_NAME (empty KEEP_NAME: only offer wrong-type builds)
+    local keep="$1" all=() old=() v size any_wrong=0
+    mapfile -t all < <(installed_versions)
+    for v in "${all[@]}"; do
+        [[ "$v" == "$keep" ]] && continue
+        if wrong_arch "$v"; then any_wrong=1; elif [[ -z "$keep" ]]; then continue; fi
+        old+=("$v")
+    done
     [[ ${#old[@]} -gt 0 ]] || return 0
     size=$(cd "$COMPAT_DIR" && du -sch "${old[@]}" 2>/dev/null | tail -n1 | cut -f1)
     section "Clean up"
     line "These older versions are still on your PC (${B}${size:-?}${R} in total):"
-    for v in "${old[@]}"; do line "  • $v"; done
+    for v in "${old[@]}"; do
+        if wrong_arch "$v"; then
+            line "  • $v ${YELLOW}(wrong type for this PC)${R}"
+        else
+            line "  • $v"
+        fi
+    done
     echo
-    line "${D}You only need them if you set a game to one of these versions yourself.${R}"
+    (( any_wrong )) && line "${D}Versions of the wrong type can't run on this PC at all.${R}"
+    line "${D}You only need the others if you set a game to one of them yourself.${R}"
     echo
     if ask_yes_no "Delete the older versions to free up space?" n; then
         for v in "${old[@]}"; do
@@ -363,16 +383,36 @@ done
 
 section "Your current setup"
 mapfile -t installed < <(installed_versions)
+usable=()
+for v in "${installed[@]}"; do wrong_arch "$v" || usable+=("$v"); done
 current_default=$(vdf_tool get 2>/dev/null || true)
+default_wrong=0
+[[ "$current_default" == GE-Proton* ]] && wrong_arch "$current_default" && default_wrong=1
 if [[ ${#installed[@]} -gt 0 ]]; then
-    row "Installed versions:" "${installed[*]}"
+    label="Installed versions:"
+    for v in "${installed[@]}"; do
+        if wrong_arch "$v"; then
+            row "$label" "$v ${YELLOW}(wrong type for this PC)${R}"
+        else
+            row "$label" "$v"
+        fi
+        label=""
+    done
 else
     row "Installed versions:" "${D}none yet${R}"
 fi
-if [[ -n "$current_default" && "$current_default" == GE-Proton* ]]; then
+if (( default_wrong )); then
+    row "Steam is using:" "$current_default ${YELLOW}(wrong type for this PC)${R}"
+elif [[ -n "$current_default" && "$current_default" == GE-Proton* ]]; then
     row "Steam is using:" "$current_default"
 else
     row "Steam is using:" "${D}Steam's own Proton (not GE-Proton)${R}"
+fi
+if (( default_wrong )); then
+    box "Steam is set to the wrong type of GE-Proton" \
+        "${B}$current_default${R} is made for a different kind of PC," \
+        "so games that use it won't start." \
+        "This tool will offer to fix that below."
 fi
 
 section "Checking for updates"
@@ -412,12 +452,14 @@ fi
 row "Newest version:" "${B}$latest${R}"
 echo
 
-if contains "$latest" "${installed[@]}"; then
+offered_default=0
+if contains "$latest" "${usable[@]}"; then
     if [[ "$current_default" == "$latest" ]]; then
         ok "${GREEN}Everything is up to date.${R} Nothing to do."
     else
         ok "The newest version is already installed."
         warn "But Steam isn't using it yet."
+        offered_default=1
         set_default "$latest"
     fi
 else
@@ -425,6 +467,7 @@ else
     echo
     if ask_yes_no "Download and install $latest now? (about ${size_mb:-?} MB)" y; then
         if install_version "$latest" "$tar_url" "$sum_url"; then
+            offered_default=1
             set_default "$latest"
         else
             finish 1
@@ -434,9 +477,24 @@ else
     fi
 fi
 
+# Steam still points to a build that can't run here and we haven't offered a fix yet
+if (( default_wrong && ! offered_default )); then
+    mapfile -t installed < <(installed_versions)
+    usable=()
+    for v in "${installed[@]}"; do wrong_arch "$v" || usable+=("$v"); done
+    if [[ ${#usable[@]} -gt 0 ]]; then
+        set_default "${usable[-1]}"
+    else
+        warn "Steam is still set to ${B}$current_default${R}, which can't run on this PC."
+        line "Install the newest version to fix this."
+    fi
+fi
+
 mapfile -t installed < <(installed_versions)
 if contains "$latest" "${installed[@]}"; then
     remove_old "$latest"
+else
+    remove_old ""
 fi
 
 section "All done"
