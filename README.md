@@ -26,7 +26,11 @@ Each time you run it, the script:
 3. **Sets it as Steam's default.** It tells Steam to use the new version for
    your games. It always asks first, closes Steam for a moment if needed,
    and backs up Steam's settings before changing anything.
-4. **Offers to clean up.** If older GE-Proton versions are still installed,
+4. **Spots wrong downloads.** If a GE-Proton version made for a different
+   kind of PC is installed (for example an ARM build on a normal PC), it is
+   marked as **"wrong type for this PC"**. If Steam is set to use one, the
+   script warns you and offers to fix it.
+5. **Offers to clean up.** If older GE-Proton versions are still installed,
    it shows how much space they use and asks whether to delete them. They
    are only deleted if you say yes.
 
@@ -35,10 +39,13 @@ without your answer.
 
 ## Requirements
 
-- **Linux** with **native Steam**, meaning Steam installed from the Steam
-  website or your distribution's package (for example `steam` on Ubuntu or
-  Linux Mint).
-  The **Flatpak** and **Snap** versions of Steam are **not** supported.
+- **Linux** with **Steam**, installed in any of these ways:
+  - from the Steam website or your Linux package manager (for example `steam`
+    on Ubuntu or Linux Mint)
+  - as a **Flatpak** (for example from Flathub or the Software Manager)
+  - as a **Snap**
+
+  If more than one is installed, the script asks which one to use.
 - **curl** and **python3**, which most Linux systems already have. If one is
   missing, the script tells you which one and how to install it, for example:
 
@@ -61,6 +68,8 @@ without your answer.
    chmod +x ge-proton-pilot.sh
    ```
 
+Keep the file somewhere it can stay, for example in your home folder.
+
 ## Usage
 
 Open a terminal in the folder where you saved the file and run:
@@ -74,22 +83,54 @@ Then answer the questions. A typical run looks like this:
 ```text
   ▌ Your current setup
 
-    Installed versions:      GE-Proton10-3
-    Steam is using:          GE-Proton10-3
+    Steam:                   Steam (standard install)
+    Installed versions:      GE-Proton11-8-x86_64
+    Steam is using:          GE-Proton11-8-x86_64
 
   ▌ Checking for updates
 
     Looking for the newest version online...
-    Newest version:          GE-Proton10-4
+    Newest version:          GE-Proton11-9-x86_64
 
     ✔ A new version is available!
 
-  ➜ Download and install GE-Proton10-4 now? (about 480 MB) [Y/n]
+  ➜ Download and install GE-Proton11-9-x86_64 now? (about 565 MB) [Y/n]
+
+  ▌ Installing GE-Proton11-9-x86_64
+
+    Downloading...
+    ████████████████████░░░░░░░░░░  66%  373 / 565 MB
 ```
 
 Press **Enter** to accept the suggested answer (the capital letter), or
 type `y` or `n` and press **Enter**. Run the script again whenever you want
 to check for updates.
+
+### Desktop shortcut
+
+To start the tool by double-clicking an icon on your desktop, open a terminal
+in the folder where `ge-proton-pilot.sh` is and run:
+
+```bash
+ln -s "$PWD/ge-proton-pilot.sh" "$(xdg-user-dir DESKTOP)/"
+```
+
+This puts a link to the script on your desktop. `xdg-user-dir DESKTOP` finds
+your desktop folder, even if it has a different name in your language
+(for example `Schreibtisch`). Because it's a link, don't move or delete the
+original file afterwards.
+
+When you double-click the icon:
+
+- **Linux Mint (Cinnamon):** choose **Run in Terminal**.
+- **Ubuntu (GNOME):** right-click the icon and choose **Allow Launching**
+  once, then right-click → **Run as a Program**.
+- **Other desktops:** if your desktop runs the script without opening a
+  terminal window, start it from a terminal as shown above instead, since the
+  tool needs a window to ask its questions.
+
+The window stays open at the end until you press **Enter**, so you can read
+what happened.
 
 ## One-time setup in Steam
 
@@ -108,26 +149,72 @@ After that, the script switches versions for you automatically.
 
 ## Important: it edits Steam's settings file
 
-To set GE-Proton as the default, the script **changes Steam's settings file**:
+To set GE-Proton as the default, the script **changes Steam's settings file**,
+`config.vdf`. Where it is depends on how Steam is installed:
 
-```text
-~/.steam/steam/config/config.vdf
-```
+| Steam    | Settings file                                                     |
+|----------|-------------------------------------------------------------------|
+| Standard | `~/.steam/steam/config/config.vdf`                                |
+| Flatpak  | `~/.var/app/com.valvesoftware.Steam/data/Steam/config/config.vdf` |
+| Snap     | `~/snap/steam/common/.steam/steam/config/config.vdf`              |
 
 To keep this safe, it:
 
 - **asks you first** and closes Steam before editing (Steam would otherwise
   overwrite the change)
 - **makes a backup** next to the file every time, named like
-  `config.vdf.bak-20261018-153000`, and keeps the 3 newest backups
+  `config.vdf.bak-20261018-153000`, and keeps the 3 newest backups. If the
+  backup can't be made, nothing is changed.
 - only changes the compatibility tool setting and leaves the rest of the file alone
 
 **To undo a change:** close Steam, then replace `config.vdf` with one of the
-backups:
+backups (standard Steam shown here):
 
 ```bash
 cp ~/.steam/steam/config/config.vdf.bak-YYYYMMDD-HHMMSS ~/.steam/steam/config/config.vdf
 ```
+
+## Options for advanced use
+
+Without options, the script asks before every step. These options are for
+running it from other scripts or on a schedule:
+
+| Option         | What it does |
+|----------------|--------------|
+| `--check`      | Only checks. Prints whether an update is available and changes nothing. |
+| `--auto`       | Installs the newest version and makes it Steam's default **without asking**. Only runs while Steam is closed. Games you set to a specific version and old versions are left alone. |
+| `--steam KIND` | Which Steam to use if more than one is installed: `native`, `flatpak` or `snap`. Needed with `--check`/`--auto` in that case. |
+| `-h`, `--help` | Shows a short help text. |
+
+Exit codes:
+
+| Code | Meaning |
+|------|---------|
+| 0    | Everything worked, or nothing to do |
+| 1    | Something went wrong (the message says what) |
+| 2    | Wrong option, or more than one Steam and no `--steam` given |
+| 3    | `--auto` only: Steam is running, so nothing was changed |
+| 10   | `--check` only: an update is available, or installed but not used by Steam yet |
+
+Example: check, and update only if there is something to do:
+
+```bash
+./ge-proton-pilot.sh --check
+if [ $? -eq 10 ]; then
+    ./ge-proton-pilot.sh --auto
+fi
+```
+
+## Troubleshooting
+
+- **"GitHub is getting too many update checks from your internet connection."**
+  GitHub limits how often it can be asked without an account. Wait until the
+  time shown and try again.
+- **"Steam did not close by itself."** Close Steam yourself (Steam menu →
+  Exit) and run the script again.
+- **A version is marked "wrong type for this PC".** It was made for a
+  different processor and can't run on your PC. The cleanup step offers to
+  delete it.
 
 ## For developers: running the tests
 
@@ -146,4 +233,5 @@ To also run [shellcheck](https://www.shellcheck.net/), install it with
 
 ## License
 
-[MIT](LICENSE)
+[MIT](LICENSE). GE-Proton itself has its own license; see the
+[GE-Proton project](https://github.com/GloriousEggroll/proton-ge-custom).
