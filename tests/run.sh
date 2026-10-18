@@ -104,8 +104,8 @@ test_setall_leaves_other_series_alone() {
     publish_history
     add_installed "$OLD" GE-Proton10-34
     write_config "$OLD" 10="$OLD" 20=GE-Proton10-34
-    # install: Enter | option 1 (all games) | start Steam: n | delete old: y | close
-    run_script '\n1\nn\ny\n\n'
+    # install: Enter | option 1 (all games) | start Steam: n | GE-Proton9: n | delete old: y | close
+    run_script '\n1\nn\nn\ny\n\n'
     assert_output "1 game is set to GE-Proton10-34 and stays on it." &&
     assert_output "Use $NEW as the default, and for that game too" &&
     assert_mapping 0 "$NEW" &&
@@ -146,8 +146,8 @@ test_unused_older_series_deleted() {
     publish_history
     add_installed GE-Proton10-33 GE-Proton10-34 "$OLD" "$NEW"
     write_config "$NEW"
-    # delete GE-Proton11-8: y | delete GE-Proton10: y | close
-    run_script 'y\ny\n\n'
+    # GE-Proton9: n | delete GE-Proton11-8: y | delete GE-Proton10: y | close
+    run_script 'n\ny\ny\n\n'
     assert_output "You also have GE-Proton10" &&
     assert_output "fallback for games that don't run well on GE-Proton11" &&
     assert_no_output "Update GE-Proton10" &&
@@ -186,7 +186,7 @@ test_cleanup_keeps_versions_games_use() {
     publish_history
     add_installed GE-Proton10-33 GE-Proton10-34 "$OLD" "$NEW"
     write_config "$NEW" 10=GE-Proton10-33
-    run_script 'y\n\n'
+    run_script 'n\ny\n\n'
     assert_output "Kept because Steam is set to use them: GE-Proton10-33" &&
     assert_output "Deleted $OLD" &&
     assert_installed GE-Proton10-33
@@ -196,8 +196,8 @@ test_older_series_is_updated_and_games_moved() {
     publish_history
     add_installed GE-Proton10-33 "$NEW"
     write_config "$NEW" 10=GE-Proton10-33 20="$NEW"
-    # install 10-34: Enter | switch that game: Enter | start Steam: n | delete 10-33: y | close
-    run_script '\n\nn\ny\n\n'
+    # install 10-34: Enter | switch that game: Enter | start Steam: n | GE-Proton9: n | delete 10-33: y | close
+    run_script '\n\nn\nn\ny\n\n'
     assert_status 0 &&
     assert_output "Everything is up to date." &&
     assert_output "The newest GE-Proton10 is GE-Proton10-34" &&
@@ -227,6 +227,65 @@ test_older_series_already_newest() {
     assert_status 0 &&
     assert_no_output "Update GE-Proton" &&
     assert_no_output "Clean up"
+}
+
+test_offers_older_series_to_try() {
+    publish_history
+    add_installed "$NEW"
+    write_config "$NEW"
+    # older series: y | GE-Proton10-34: Enter | GE-Proton9-27: Enter | close
+    run_script 'y\n\n\n\n'
+    assert_status 0 &&
+    assert_installed GE-Proton10-34 &&
+    assert_installed GE-Proton9-27 &&
+    assert_not_downloaded GE-Proton10-33.tar.gz &&
+    assert_output "Choose GE-Proton10-34 or GE-Proton9-27 in the list." &&
+    assert_mapping 0 "$NEW" &&
+    assert_backups 0 &&
+    { [[ "$(sort "$HOME/.config/ge-proton-pilot/keep")" == $'10\n9' ]] || fail_test "keep file: $(cat "$HOME/.config/ge-proton-pilot/keep")"; }
+}
+
+test_offers_older_series_pick_one() {
+    publish_history
+    add_installed "$NEW"
+    write_config "$NEW"
+    # older series: y | GE-Proton10-34: n | GE-Proton9-27: Enter | close
+    run_script 'y\nn\n\n\n'
+    assert_not_installed GE-Proton10-34 &&
+    assert_installed GE-Proton9-27 &&
+    assert_output "Choose GE-Proton9-27 in the list."
+}
+
+test_older_series_offer_declined_by_default() {
+    publish_history
+    add_installed "$NEW"
+    write_config "$NEW"
+    run_script '\n\n'
+    assert_status 0 &&
+    assert_not_downloaded GE-Proton10-34.tar.gz &&
+    assert_not_downloaded GE-Proton9-27.tar.gz
+}
+
+test_older_series_offer_only_for_missing_series() {
+    publish_history
+    add_installed GE-Proton10-34 "$NEW"
+    write_config "$NEW" 10=GE-Proton10-34
+    # older series: y | close (only GE-Proton9 is offered, so no second question)
+    run_script 'y\n\n'
+    assert_installed GE-Proton9-27 &&
+    assert_not_downloaded GE-Proton10-34.tar.gz
+}
+
+test_no_older_series_offer_on_arm() {
+    export FAKE_ARCH=aarch64
+    publish_history
+    add_installed "$ARM"
+    write_config "$ARM"
+    # an answer of y would be taken by the offer if it were shown
+    run_script 'y\n\n'
+    assert_status 0 &&
+    assert_not_downloaded GE-Proton10-34.tar.gz &&
+    assert_not_downloaded GE-Proton9-27.tar.gz
 }
 
 test_closes_and_restarts_running_steam() {
@@ -284,7 +343,8 @@ test_cleanup_deletes_old_versions() {
     publish_release "$LATEST"
     add_installed "$OLD" "$NEW"
     write_config "$NEW"
-    run_script 'y\n\n'
+    # older series: n | delete old: y | close
+    run_script 'n\ny\n\n'
     assert_output "Clean up" &&
     assert_output "Deleted $OLD" &&
     assert_not_installed "$OLD" &&
