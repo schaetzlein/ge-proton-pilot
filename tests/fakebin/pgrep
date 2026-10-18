@@ -1,0 +1,3 @@
+#!/usr/bin/env bash
+# Fake pgrep: Steam "runs" while $FAKE_STEAM_RUNNING exists
+[[ -e "$FAKE_STEAM_RUNNING" ]]

@@ -129,6 +129,21 @@ backups:
 cp ~/.steam/steam/config/config.vdf.bak-YYYYMMDD-HHMMSS ~/.steam/steam/config/config.vdf
 ```
 
+## For developers: running the tests
+
+The tests run the script in a fake environment: a temporary home folder,
+made-up Steam settings, and stand-ins for `curl`, `pgrep` and `steam`. They
+never touch your real Steam or go online.
+
+```bash
+tests/run.sh            # run everything (also runs shellcheck if installed)
+tests/run.sh cleanup    # run only tests whose name contains "cleanup"
+```
+
+To also run [shellcheck](https://www.shellcheck.net/), install it with
+`sudo apt install shellcheck`. To use a copy that isn't on your PATH, set
+`SHELLCHECK=/path/to/shellcheck`.
+
 ## License
 
 [MIT](LICENSE)
