@@ -246,12 +246,45 @@ installed_versions() {
     find "$COMPAT_DIR" -mindepth 1 -maxdepth 1 -type d -name 'GE-Proton*' -printf '%f\n' | sort -V
 }
 
-install_version() {  # install_version TAG TARBALL_URL CHECKSUM_URL
-    local tag="$1" tar_url="$2" sum_url="$3" tmp
+progress_bar() {  # progress_bar DONE_BYTES TOTAL_BYTES (TOTAL 0 = unknown)
+    local have="$1" total="$2" width=30 pct filled bar rest
+    if (( total > 0 )); then
+        pct=$(( have * 100 / total )); (( pct > 100 )) && pct=100
+        filled=$(( pct * width / 100 ))
+        printf -v bar '%*s' "$filled" ''
+        printf -v rest '%*s' $(( width - filled )) ''
+        printf '\r    %s%s%s%s%s %3d%%  %d / %d MB ' "$GREEN" "${bar// /█}" "$D" "${rest// /░}" "$R" \
+            "$pct" $(( have / 1000000 )) $(( total / 1000000 ))
+    else
+        printf '\r    %d MB downloaded ' $(( have / 1000000 ))
+    fi
+}
+
+download() {  # download URL FILE [TOTAL_BYTES] -> shows an indented progress bar on a terminal
+    local url="$1" file="$2" total="${3:-0}" pid status
+    curl -fsSL -o "$file" "$url" &
+    pid=$!
+    if [[ -t 1 ]]; then
+        while kill -0 "$pid" 2>/dev/null; do
+            progress_bar "$(stat -c %s "$file" 2>/dev/null || echo 0)" "$total"
+            sleep 0.5
+        done
+    fi
+    wait "$pid"; status=$?
+    if [[ -t 1 ]]; then
+        (( status == 0 )) && progress_bar "$(stat -c %s "$file" 2>/dev/null || echo 0)" "$total"
+        echo
+    fi
+    return "$status"
+}
+
+install_version() {  # install_version TAG TARBALL_URL CHECKSUM_URL [TARBALL_BYTES]
+    local tag="$1" tar_url="$2" sum_url="$3" bytes="${4:-0}" tmp
     tmp=$(mktemp -d)
     section "Installing $tag"
     line "Downloading..."
-    if ! (cd "$tmp" && curl -fL --progress-bar -O "$tar_url" && curl -fsSL -O "$sum_url"); then
+    if ! download "$tar_url" "$tmp/${tar_url##*/}" "$bytes" ||
+       ! curl -fsSL -o "$tmp/${sum_url##*/}" "$sum_url"; then
         fail "The download failed. Please check your internet connection and try again."
         rm -rf "$tmp"
         return 1
@@ -421,7 +454,7 @@ release_json=$(curl -fsSL "$API_URL") || {
     fail "Couldn't reach GitHub. Please check your internet connection and try again."
     finish 1
 }
-read -r latest tar_url sum_url size_mb < <(python3 -c '
+read -r latest tar_url sum_url size_mb size_bytes < <(python3 -c '
 import json, re, sys
 arch = sys.argv[1]
 d = json.load(sys.stdin)
@@ -433,7 +466,8 @@ tars = [a for a in assets
         if a["browser_download_url"].endswith(".tar.gz")
         and bool(is_arm(a["browser_download_url"])) == want_arm]
 tar = tars[0]["browser_download_url"] if tars else ""
-size = round(tars[0].get("size", 0) / 1e6) if tars else 0
+size_bytes = tars[0].get("size", 0) if tars else 0
+size = round(size_bytes / 1e6)
 # The checksum file has the same name as the archive, ending in .sha512sum
 sha = tar[:-len(".tar.gz")] + ".sha512sum" if tar else ""
 if sha not in urls:
@@ -441,7 +475,7 @@ if sha not in urls:
 # The archive name (e.g. GE-Proton11-9-x86_64) is also the folder it unpacks to
 # and the name Steam uses for the tool; it can differ from the release tag
 name = tar.rsplit("/", 1)[-1][:-len(".tar.gz")] if tar and d.get("tag_name") else ""
-print(name, tar, sha, size)
+print(name, tar, sha, size, size_bytes)
 ' "$(uname -m)" <<<"$release_json")
 
 if [[ -z "${latest:-}" || -z "${tar_url:-}" || -z "${sum_url:-}" ]]; then
@@ -466,7 +500,7 @@ else
     ok "${GREEN}A new version is available!${R}"
     echo
     if ask_yes_no "Download and install $latest now? (about ${size_mb:-?} MB)" y; then
-        if install_version "$latest" "$tar_url" "$sum_url"; then
+        if install_version "$latest" "$tar_url" "$sum_url" "${size_bytes:-0}"; then
             offered_default=1
             set_default "$latest"
         else
