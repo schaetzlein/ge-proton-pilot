@@ -526,11 +526,32 @@ scan_installed() {  # sets installed, usable, current_default, default_wrong, ha
 }
 
 fetch_release() {  # sets latest, tar_url, sum_url, size_mb, size_bytes
-    local release_json
-    release_json=$(curl -fsSL "$API_URL") || {
+    local release_json status remaining reset tmp
+    tmp=$(mktemp -d)
+    if ! status=$(curl -sSL -D "$tmp/headers" -o "$tmp/body" -w '%{http_code}' "$API_URL" 2>/dev/null); then
+        rm -rf "$tmp"
         fail "Couldn't reach GitHub. Please check your internet connection and try again."
         finish 1
-    }
+    fi
+    release_json=$(<"$tmp/body")
+    # With redirects there can be several header blocks; the last one counts
+    remaining=$(grep -i '^x-ratelimit-remaining:' "$tmp/headers" | tail -n1 | tr -dc '0-9')
+    reset=$(grep -i '^x-ratelimit-reset:' "$tmp/headers" | tail -n1 | tr -dc '0-9')
+    rm -rf "$tmp"
+    if [[ "$status" != 200 ]]; then
+        if [[ "$status" == 429 || ( "$status" == 403 && "$remaining" == 0 ) ]]; then
+            fail "GitHub is getting too many update checks from your internet connection."
+            if [[ -n "$reset" ]] && reset=$(date -d "@$reset" +%H:%M 2>/dev/null); then
+                line "This is a temporary limit. Please try again after ${B}$reset${R}."
+            else
+                line "This is a temporary limit. Please try again in an hour."
+            fi
+        else
+            fail "GitHub answered with an error (code $status)."
+            line "This is usually temporary. Please try again later."
+        fi
+        finish 1
+    fi
     read -r latest tar_url sum_url size_mb size_bytes < <(python3 -c '
 import json, re, sys
 arch = sys.argv[1]
