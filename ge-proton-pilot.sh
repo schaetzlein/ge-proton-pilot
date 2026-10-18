@@ -366,11 +366,16 @@ set_default() {  # set_default NAME
 }
 
 remove_old() {  # remove_old KEEP_NAME (empty KEEP_NAME: only offer wrong-type builds)
-    local keep="$1" all=() old=() v size any_wrong=0
+    local keep="$1" all=() old=() v size any_wrong=0 all_wrong=1 default=n
     mapfile -t all < <(installed_versions)
     for v in "${all[@]}"; do
         [[ "$v" == "$keep" ]] && continue
-        if wrong_arch "$v"; then any_wrong=1; elif [[ -z "$keep" ]]; then continue; fi
+        if wrong_arch "$v"; then
+            any_wrong=1
+        else
+            [[ -z "$keep" ]] && continue
+            all_wrong=0
+        fi
         old+=("$v")
     done
     [[ ${#old[@]} -gt 0 ]] || return 0
@@ -386,9 +391,13 @@ remove_old() {  # remove_old KEEP_NAME (empty KEEP_NAME: only offer wrong-type b
     done
     echo
     (( any_wrong )) && line "${D}Versions of the wrong type can't run on this PC at all.${R}"
-    line "${D}You only need the others if you set a game to one of them yourself.${R}"
+    if (( all_wrong )); then
+        default=y  # nothing in the list can ever be used here
+    else
+        line "${D}You only need the others if you set a game to one of them yourself.${R}"
+    fi
     echo
-    if ask_yes_no "Delete the older versions to free up space?" n; then
+    if ask_yes_no "Delete the older versions to free up space?" "$default"; then
         for v in "${old[@]}"; do
             rm -rf "${COMPAT_DIR:?}/$v" && ok "Deleted $v"
         done
