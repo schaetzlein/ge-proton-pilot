@@ -4,6 +4,7 @@
 # - Installs it (with checksum verification)
 # - Sets it as Steam's default compatibility tool
 # - Optionally removes old GE-Proton versions
+# Asks before every step; see --help for --check and --auto.
 #
 # GE-Proton itself is made by GloriousEggroll and contributors:
 # https://github.com/GloriousEggroll/proton-ge-custom
