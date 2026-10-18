@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# GE-Proton Manager for native Steam (installed from the Steam website / .deb)
+# GE-Proton Pilot for native Steam (installed from the Steam website / .deb)
 # - Checks GitHub for the newest GE-Proton release
 # - Installs it (with checksum verification)
 # - Sets it as Steam's default compatibility tool
@@ -24,7 +24,7 @@ fi
 header() {
     echo
     echo "  ${B}${CYAN}╭──────────────────────────────────────────────╮${R}"
-    echo "  ${B}${CYAN}│              GE-Proton Manager               │${R}"
+    echo "  ${B}${CYAN}│               GE-Proton Pilot                │${R}"
     echo "  ${B}${CYAN}╰──────────────────────────────────────────────╯${R}"
     echo "  ${D}Keeps GE-Proton up to date. GE-Proton is a community${R}"
     echo "  ${D}version of Proton that helps Windows games run on Linux.${R}"
