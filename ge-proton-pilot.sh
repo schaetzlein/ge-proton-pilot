@@ -257,6 +257,8 @@ choose_steam() {  # sets STEAM_KIND, STEAM_DIR, ... ; returns 1 if no Steam, 2 i
     esac
 }
 
+STEAM_CLOSED_BY_US=0
+
 steam_running() { pgrep -x steam >/dev/null 2>&1; }
 
 close_steam() {
@@ -271,6 +273,7 @@ close_steam() {
     for _ in $(seq 1 60); do
         if ! steam_running; then
             echo " ${GREEN}✔${R}"
+            STEAM_CLOSED_BY_US=1
             sleep 2
             return 0
         fi
@@ -283,10 +286,16 @@ close_steam() {
     return 1
 }
 
-offer_start_steam() {
+offer_start_steam() {  # offer_start_steam [now] -> "again" only after this tool closed Steam itself
+    local question="Start Steam again?"
+    if [[ "${1:-}" == now ]]; then
+        question="Open Steam now?"
+    else
+        (( STEAM_CLOSED_BY_US )) || return 0
+    fi
     steam_running && return 0
     echo
-    if ask_yes_no "Start Steam again?" y; then
+    if ask_yes_no "$question" y; then
         setsid -f "${STEAM_CMD[@]}" >/dev/null 2>&1
         ok "Steam is starting."
     fi
@@ -410,7 +419,7 @@ set_default() {  # set_default NAME
     vdf_tool get >/dev/null 2>&1
     if [[ $? -eq 3 ]]; then
         manual_setup_box "$name"
-        offer_start_steam
+        offer_start_steam now
         return 0
     fi
 

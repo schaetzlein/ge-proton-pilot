@@ -24,9 +24,10 @@ Each time you run it, the script:
    PCs or ARM devices) and checks it against the official checksum, so a
    broken or tampered download is never installed.
 3. **Sets it as Steam's default.** Steam uses the default for every game you
-   haven't set to a version yourself. It always asks first, closes Steam for
-   a moment if needed, and backs up Steam's settings before changing
-   anything. Games set to an older build of the same series (for example
+   haven't set to a version yourself. It always asks first. If Steam is
+   open, it asks to close it for a moment and offers to start it again
+   afterwards. It backs up Steam's settings before changing anything.
+   Games set to an older build of the same series (for example
    GE-Proton11-8 when GE-Proton11-9 comes out) can be switched along with it.
    Games set to another series, such as GE-Proton10, stay on it. The script
    tells you which ones these are.
@@ -208,7 +209,8 @@ file so clean-up asks again.
 
 The script can only switch Steam to GE-Proton once Steam has saved a
 compatibility setting. If you have never changed it, the script stops at
-this point and shows these steps. You only need to do them once:
+this point, shows these steps and offers to open Steam for you. You only
+need to do them once:
 
 1. Open Steam.
 2. Click **Steam** (top left), then **Settings**.
@@ -232,8 +234,10 @@ To set GE-Proton as the default, the script **changes Steam's settings file**,
 
 To keep this safe, it:
 
-- **asks you first** and closes Steam before editing (Steam would otherwise
-  overwrite the change)
+- **asks you first** and, if Steam is open, asks to close it before editing
+  (Steam would otherwise overwrite the change). If you say no, nothing is
+  changed. Afterwards it offers to start Steam again, but only if it closed
+  Steam itself.
 - **makes a backup** next to the file every time, named like
   `config.vdf.bak-20261018-153000`, and keeps the 3 newest backups. If the
   backup can't be made, nothing is changed.
