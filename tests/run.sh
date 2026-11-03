@@ -29,8 +29,8 @@ publish_history() {  # the last GE-Proton9 and GE-Proton10 builds, then the curr
 test_new_install() {
     publish_release "$LATEST"
     write_config proton_experimental
-    # install: Enter (yes) | make it the default: Enter | start Steam: n | close: Enter
-    run_script '\n\nn\n\n'
+    # install: Enter (yes) | make it the default: Enter | close: Enter
+    run_script '\n\n\n'
     assert_status 0 &&
     assert_output "A new version is available!" &&
     assert_output "Checked: the download is complete and genuine" &&
@@ -67,21 +67,32 @@ test_no_stored_steam_setting_shows_manual_setup() {
     publish_release "$LATEST"
     write_config_without_mapping
     cp "$STEAM/config/config.vdf" "$WORK/before.vdf"
+    # install: Enter | open Steam: n | close
     run_script '\nn\n\n'
     assert_status 0 &&
     assert_installed "$NEW" &&
     assert_output "One-time setup in Steam" &&
+    assert_no_output "Steam is starting." &&
     assert_output "choose $NEW" &&
     assert_backups 0 &&
     { cmp -s "$WORK/before.vdf" "$STEAM/config/config.vdf" || fail_test "config.vdf was changed"; }
+}
+
+test_manual_setup_offers_to_open_steam() {
+    publish_release "$LATEST"
+    write_config_without_mapping
+    # install: Enter | open Steam: Enter | close
+    run_script '\n\n\n'
+    assert_output "One-time setup in Steam" &&
+    assert_output "Steam is starting."
 }
 
 test_pinned_games_setall() {
     publish_release "$LATEST"
     add_installed "$OLD"
     write_config "$OLD" 10="$OLD" 20=proton_9
-    # install: Enter | option 1 (all games) | start Steam: n | delete old: y | close: Enter
-    run_script '\n1\nn\ny\n\n'
+    # install: Enter | option 1 (all games) | delete old: y | close: Enter
+    run_script '\n1\ny\n\n'
     assert_output "You have 1 game set to an older GE-Proton11 version." &&
     assert_mapping 0 "$NEW" &&
     assert_mapping 10 "$NEW" &&
@@ -92,8 +103,8 @@ test_pinned_games_keep() {
     publish_release "$LATEST"
     add_installed "$OLD"
     write_config "$OLD" 10="$OLD"
-    # install: Enter | option 2 (leave that game) | start Steam: n | close (no clean-up: a game uses it)
-    run_script '\n2\nn\n\n'
+    # install: Enter | option 2 (leave that game) | close (no clean-up: a game uses it)
+    run_script '\n2\n\n'
     assert_mapping 0 "$NEW" &&
     assert_mapping 10 "$OLD" &&
     assert_installed "$OLD" &&
@@ -104,8 +115,8 @@ test_setall_leaves_other_series_alone() {
     publish_history
     add_installed "$OLD" GE-Proton10-34
     write_config "$OLD" 10="$OLD" 20=GE-Proton10-34
-    # install: Enter | option 1 (all games) | start Steam: n | GE-Proton9: n | delete old: y | close
-    run_script '\n1\nn\nn\ny\n\n'
+    # install: Enter | option 1 (all games) | GE-Proton9: n | delete old: y | close
+    run_script '\n1\nn\ny\n\n'
     assert_output "1 game is set to GE-Proton10-34 and stays on it." &&
     assert_output "Use $NEW as the default, and for that game too" &&
     assert_mapping 0 "$NEW" &&
@@ -119,8 +130,8 @@ test_other_series_only_is_mentioned() {
     publish_history
     add_installed "$OLD" GE-Proton10-34
     write_config "$OLD" 10=GE-Proton10-34 20=GE-Proton10-34
-    # install: Enter | make it the default: Enter | start Steam: n | delete old: y | close
-    run_script '\n\nn\ny\n\n'
+    # install: Enter | make it the default: Enter | delete old: y | close
+    run_script '\n\ny\n\n'
     assert_output "2 games are set to GE-Proton10-34 and stay on it." &&
     assert_no_output "1) Use" &&
     assert_mapping 0 "$NEW" &&
@@ -196,8 +207,8 @@ test_older_series_is_updated_and_games_moved() {
     publish_history
     add_installed GE-Proton10-33 "$NEW"
     write_config "$NEW" 10=GE-Proton10-33 20="$NEW"
-    # install 10-34: Enter | switch that game: Enter | start Steam: n | GE-Proton9: n | delete 10-33: y | close
-    run_script '\n\nn\nn\ny\n\n'
+    # install 10-34: Enter | switch that game: Enter | GE-Proton9: n | delete 10-33: y | close
+    run_script '\n\nn\ny\n\n'
     assert_status 0 &&
     assert_output "Everything is up to date." &&
     assert_output "The newest GE-Proton10 is GE-Proton10-34" &&
@@ -300,12 +311,21 @@ test_closes_and_restarts_running_steam() {
     { grep -qx 'steam -shutdown' "$FAKE_SERVER/requests.log" || fail_test "Steam was not shut down"; }
 }
 
+test_does_not_offer_to_start_steam_it_did_not_close() {
+    publish_release "$LATEST"
+    write_config proton_experimental
+    # Steam is not running | install | use it | close window
+    run_script '\n\n\n'
+    assert_mapping 0 "$NEW" &&
+    assert_no_output "Steam is starting."
+}
+
 test_wrong_arch_build_is_flagged_and_replaced() {
     publish_release "$LATEST"
     add_installed "$ARM"
     write_config "$ARM"
-    # install | use it | start Steam: n | delete wrong build: Enter (default yes) | close
-    run_script '\n\nn\n\n\n'
+    # install | use it | delete wrong build: Enter (default yes) | close
+    run_script '\n\n\n\n'
     assert_output "$ARM (wrong type for this PC)" &&
     assert_output "Steam is set to the wrong type of GE-Proton" &&
     assert_output "A new version is available!" &&
@@ -318,8 +338,8 @@ test_wrong_arch_default_fixed_without_update() {
     publish_release "$LATEST"
     add_installed "$OLD" "$ARM"
     write_config "$ARM"
-    # install: n | switch to the usable older version: Enter | start Steam: n | delete: Enter | close
-    run_script 'n\n\nn\n\n\n'
+    # install: n | switch to the usable older version: Enter | delete: Enter | close
+    run_script 'n\n\n\n\n'
     assert_output "Okay, nothing was installed." &&
     assert_output "Make $OLD the default" &&
     assert_mapping 0 "$OLD" &&
